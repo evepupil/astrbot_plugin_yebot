@@ -1,0 +1,5 @@
+name: astrbot_plugin_yebot
+author: YeBot
+desc: QQ 机器人分阶段插件：消息观察、身份权限、工具网关与 Agent 编排
+version: 0.1.0
+repo: https://github.com/example/astrbot_plugin_yebot

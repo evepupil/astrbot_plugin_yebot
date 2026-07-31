@@ -1,0 +1,69 @@
+{
+  "owner_qq_ids": {
+    "type": "list",
+    "title": "主人 QQ 号",
+    "description": "拥有全局最高权限的 QQ 号列表。",
+    "items": {
+      "type": "string"
+    },
+    "default": []
+  },
+  "observe_only": {
+    "type": "bool",
+    "title": "只观察模式",
+    "description": "开启后只记录决策，不自动发言、不调用模型和工具。",
+    "default": true
+  },
+  "cooldown_seconds": {
+    "type": "int",
+    "title": "回复冷却秒数",
+    "description": "同一群的最短回复间隔。",
+    "default": 60,
+    "minimum": 0,
+    "maximum": 86400
+  },
+  "quiet_hours_start": {
+    "type": "int",
+    "title": "静默开始小时",
+    "description": "按本地时间计算，取值 0 到 23。",
+    "default": 0,
+    "minimum": 0,
+    "maximum": 23
+  },
+  "quiet_hours_end": {
+    "type": "int",
+    "title": "静默结束小时",
+    "description": "按本地时间计算，取值 0 到 23；与开始相同表示不启用跨午夜静默。",
+    "default": 7,
+    "minimum": 0,
+    "maximum": 23
+  },
+  "daily_reply_limit": {
+    "type": "int",
+    "title": "每日回复上限",
+    "description": "每个群每天最多自动回复次数。",
+    "default": 20,
+    "minimum": 0,
+    "maximum": 10000
+  },
+  "reply_probability": {
+    "type": "float",
+    "title": "回复概率",
+    "description": "通过前置规则后实际回复的概率，范围 0 到 1。",
+    "default": 0.2,
+    "minimum": 0,
+    "maximum": 1
+  },
+  "require_mention": {
+    "type": "bool",
+    "title": "要求 @机器人",
+    "description": "开启后只有明确 @ 机器人的群消息才进入回复候选。",
+    "default": true
+  },
+  "bot_qq_id": {
+    "type": "string",
+    "title": "机器人 QQ 号",
+    "description": "用于识别消息中的 @机器人；留空时不判断 @。",
+    "default": ""
+  }
+}

@@ -1,0 +1,146 @@
+"""Role-based capability authorization for future tools."""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from dataclasses import dataclass
+from enum import StrEnum
+from types import MappingProxyType
+from typing import Final
+
+from .identity import Identity, UserRole, normalize_id
+
+
+class Capability(StrEnum):
+    """Capabilities that a tool may request."""
+
+    READ = "read"
+    SEND_MESSAGE = "send_message"
+    MANAGE_GROUP = "manage_group"
+    MANAGE_BOT = "manage_bot"
+    EXTERNAL_WRITE = "external_write"
+
+
+class PermissionScope(StrEnum):
+    """The resource scope a capability is allowed to touch."""
+
+    GLOBAL = "global"
+    CURRENT_GROUP = "current_group"
+
+
+class PermissionDecisionCode(StrEnum):
+    """Stable reasons returned to callers and audit code."""
+
+    ALLOW = "allow"
+    ROLE_DENIED = "role_denied"
+    OUT_OF_SCOPE = "out_of_scope"
+    GROUP_REQUIRED = "group_required"
+    UNKNOWN_CAPABILITY = "unknown_capability"
+
+
+@dataclass(frozen=True, slots=True)
+class CapabilityPolicy:
+    """Role and scope requirements for one capability."""
+
+    allowed_roles: frozenset[UserRole]
+    scope: PermissionScope
+
+
+CAPABILITY_POLICIES: Final[Mapping[Capability, CapabilityPolicy]] = MappingProxyType(
+    {
+        Capability.READ: CapabilityPolicy(frozenset(UserRole), PermissionScope.GLOBAL),
+        Capability.SEND_MESSAGE: CapabilityPolicy(
+            frozenset(UserRole), PermissionScope.CURRENT_GROUP
+        ),
+        Capability.MANAGE_GROUP: CapabilityPolicy(
+            frozenset({UserRole.OWNER, UserRole.GROUP_ADMIN}),
+            PermissionScope.CURRENT_GROUP,
+        ),
+        Capability.MANAGE_BOT: CapabilityPolicy(
+            frozenset({UserRole.OWNER}), PermissionScope.GLOBAL
+        ),
+        Capability.EXTERNAL_WRITE: CapabilityPolicy(
+            frozenset({UserRole.OWNER}), PermissionScope.GLOBAL
+        ),
+    }
+)
+
+
+@dataclass(frozen=True, slots=True)
+class PermissionDecision:
+    """Authorization result without any message content."""
+
+    capability: str
+    role: UserRole
+    target_group_id: str
+    code: PermissionDecisionCode
+
+    @property
+    def allowed(self) -> bool:
+        return self.code is PermissionDecisionCode.ALLOW
+
+
+def authorize(
+    identity: Identity,
+    capability: Capability | str,
+    *,
+    target_group_id: str | None = None,
+    policies: Mapping[Capability, CapabilityPolicy] = CAPABILITY_POLICIES,
+) -> PermissionDecision:
+    """Authorize a capability for an identity and optional target group.
+
+    Group-scoped capabilities default to the sender's current group. Owners may
+    target another group, while every other role is limited to its current group.
+    """
+
+    capability_name = (
+        capability.value
+        if isinstance(capability, Capability)
+        else str(capability).strip().lower()
+    )
+    try:
+        normalized_capability = Capability(capability_name)
+    except ValueError:
+        return PermissionDecision(
+            capability=capability_name,
+            role=identity.role,
+            target_group_id=normalize_id(target_group_id),
+            code=PermissionDecisionCode.UNKNOWN_CAPABILITY,
+        )
+
+    policy = policies[normalized_capability]
+    requested_group_id = normalize_id(target_group_id)
+    if identity.role not in policy.allowed_roles:
+        return PermissionDecision(
+            capability=normalized_capability.value,
+            role=identity.role,
+            target_group_id=requested_group_id,
+            code=PermissionDecisionCode.ROLE_DENIED,
+        )
+
+    if policy.scope is PermissionScope.CURRENT_GROUP:
+        requested_group_id = requested_group_id or identity.group_id
+        if not requested_group_id:
+            return PermissionDecision(
+                capability=normalized_capability.value,
+                role=identity.role,
+                target_group_id="",
+                code=PermissionDecisionCode.GROUP_REQUIRED,
+            )
+        if (
+            identity.role is not UserRole.OWNER
+            and requested_group_id != identity.group_id
+        ):
+            return PermissionDecision(
+                capability=normalized_capability.value,
+                role=identity.role,
+                target_group_id=requested_group_id,
+                code=PermissionDecisionCode.OUT_OF_SCOPE,
+            )
+
+    return PermissionDecision(
+        capability=normalized_capability.value,
+        role=identity.role,
+        target_group_id=requested_group_id,
+        code=PermissionDecisionCode.ALLOW,
+    )

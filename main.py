@@ -45,7 +45,6 @@ def _as_id_list(value: object) -> tuple[str, ...]:
     "YeBot",
     "QQ 机器人分阶段插件：消息观察、身份权限、工具网关与 Agent 编排",
     "0.1.0",
-    "https://github.com/example/astrbot_plugin_yebot",
 )
 class YeBot(Star):
     """M2 runtime: observe group messages without producing side effects."""

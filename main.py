@@ -52,7 +52,12 @@ class YeBot(Star):
     def __init__(self, context: Context, config: dict[str, Any] | None = None) -> None:
         super().__init__(context, config)
         values: Mapping[str, Any] = config or {}
-        self._owner_ids = _as_id_list(values.get("owner_qq_ids"))
+        configured_owner_ids = _as_id_list(values.get("owner_qq_ids"))
+        astrbot_config = context.get_config()
+        astrbot_owner_ids = _as_id_list(astrbot_config.get("admins_id"))
+        self._owner_ids = tuple(
+            dict.fromkeys((*configured_owner_ids, *astrbot_owner_ids))
+        )
         self._bot_id = str(values.get("bot_qq_id", "")).strip()
         self._observe_only = _as_bool(values.get("observe_only"), True)
         self._policy = LowFrequencyPolicy(
@@ -75,10 +80,11 @@ class YeBot(Star):
         raw_event = getattr(event.message_obj, "raw_message", None)
         if not isinstance(raw_event, Mapping):
             return
+        event_bot_id = event.get_self_id().strip()
         observation = observe_event(
             raw_event,
             owner_ids=self._owner_ids,
-            bot_id=self._bot_id,
+            bot_id=event_bot_id or self._bot_id,
             policy=self._policy,
             now=datetime.now().astimezone(),
         )

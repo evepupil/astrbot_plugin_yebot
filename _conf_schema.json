@@ -63,7 +63,7 @@
   "bot_qq_id": {
     "type": "string",
     "title": "机器人 QQ 号",
-    "description": "用于识别消息中的 @机器人；留空时不判断 @。",
+    "description": "可选备用值；优先使用 AstrBot 事件自带的机器人 QQ 号，留空即可自动识别。",
     "default": ""
   }
 }

@@ -2,6 +2,7 @@ import pytest
 
 from yebot.domain.identity import Identity, UserRole
 from yebot.domain.permissions import (
+    TOOL_PERMISSION_POLICIES,
     Capability,
     PermissionDecisionCode,
     authorize,
@@ -74,3 +75,35 @@ def test_unknown_capability_is_denied() -> None:
 
     assert decision.code is PermissionDecisionCode.UNKNOWN_CAPABILITY
     assert not decision.allowed
+
+
+@pytest.mark.parametrize(
+    ("role", "permission", "allowed"),
+    [
+        (UserRole.MEMBER, "group.member.kick", False),
+        (UserRole.GROUP_ADMIN, "group.member.kick", True),
+        (UserRole.OWNER, "group.member.kick", True),
+        (UserRole.MEMBER, "group.member.mute", False),
+        (UserRole.GROUP_ADMIN, "group.member.mute", True),
+        (UserRole.MEMBER, "group.member.read", True),
+    ],
+)
+def test_tool_permission_keys(role: UserRole, permission: str, allowed: bool) -> None:
+    decision = authorize(
+        identity(role),
+        permission,
+        policies=TOOL_PERMISSION_POLICIES,
+    )
+
+    assert decision.allowed is allowed
+
+
+def test_tool_permission_key_keeps_group_scope() -> None:
+    decision = authorize(
+        identity(UserRole.GROUP_ADMIN, "100"),
+        "group.member.kick",
+        target_group_id="200",
+        policies=TOOL_PERMISSION_POLICIES,
+    )
+
+    assert decision.code is PermissionDecisionCode.OUT_OF_SCOPE

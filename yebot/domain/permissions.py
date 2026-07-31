@@ -1,4 +1,4 @@
-"""Role-based capability authorization for future tools."""
+"""Role-based capability authorization for tools."""
 
 from __future__ import annotations
 
@@ -46,7 +46,7 @@ class CapabilityPolicy:
     scope: PermissionScope
 
 
-CAPABILITY_POLICIES: Final[Mapping[Capability, CapabilityPolicy]] = MappingProxyType(
+CAPABILITY_POLICIES: Final[Mapping[str, CapabilityPolicy]] = MappingProxyType(
     {
         Capability.READ: CapabilityPolicy(frozenset(UserRole), PermissionScope.GLOBAL),
         Capability.SEND_MESSAGE: CapabilityPolicy(
@@ -60,6 +60,42 @@ CAPABILITY_POLICIES: Final[Mapping[Capability, CapabilityPolicy]] = MappingProxy
             frozenset({UserRole.OWNER}), PermissionScope.GLOBAL
         ),
         Capability.EXTERNAL_WRITE: CapabilityPolicy(
+            frozenset({UserRole.OWNER}), PermissionScope.GLOBAL
+        ),
+    }
+)
+
+
+TOOL_PERMISSION_POLICIES: Final[Mapping[str, CapabilityPolicy]] = MappingProxyType(
+    {
+        "read": CAPABILITY_POLICIES[Capability.READ],
+        "send_message": CAPABILITY_POLICIES[Capability.SEND_MESSAGE],
+        "manage_group": CAPABILITY_POLICIES[Capability.MANAGE_GROUP],
+        "manage_bot": CAPABILITY_POLICIES[Capability.MANAGE_BOT],
+        "external_write": CAPABILITY_POLICIES[Capability.EXTERNAL_WRITE],
+        "message.read": CapabilityPolicy(frozenset(UserRole), PermissionScope.GLOBAL),
+        "message.send": CapabilityPolicy(
+            frozenset(UserRole), PermissionScope.CURRENT_GROUP
+        ),
+        "group.member.read": CapabilityPolicy(
+            frozenset(UserRole), PermissionScope.CURRENT_GROUP
+        ),
+        "group.member.kick": CapabilityPolicy(
+            frozenset({UserRole.OWNER, UserRole.GROUP_ADMIN}),
+            PermissionScope.CURRENT_GROUP,
+        ),
+        "group.member.mute": CapabilityPolicy(
+            frozenset({UserRole.OWNER, UserRole.GROUP_ADMIN}),
+            PermissionScope.CURRENT_GROUP,
+        ),
+        "group.member.edit": CapabilityPolicy(
+            frozenset({UserRole.OWNER, UserRole.GROUP_ADMIN}),
+            PermissionScope.CURRENT_GROUP,
+        ),
+        "bot.manage": CapabilityPolicy(
+            frozenset({UserRole.OWNER}), PermissionScope.GLOBAL
+        ),
+        "external.write": CapabilityPolicy(
             frozenset({UserRole.OWNER}), PermissionScope.GLOBAL
         ),
     }
@@ -85,7 +121,7 @@ def authorize(
     capability: Capability | str,
     *,
     target_group_id: str | None = None,
-    policies: Mapping[Capability, CapabilityPolicy] = CAPABILITY_POLICIES,
+    policies: Mapping[str, CapabilityPolicy] = CAPABILITY_POLICIES,
 ) -> PermissionDecision:
     """Authorize a capability for an identity and optional target group.
 
@@ -99,20 +135,22 @@ def authorize(
         else str(capability).strip().lower()
     )
     try:
-        normalized_capability = Capability(capability_name)
+        normalized_capability = Capability(capability_name).value
     except ValueError:
+        normalized_capability = capability_name
+
+    policy = policies.get(normalized_capability)
+    if policy is None:
         return PermissionDecision(
-            capability=capability_name,
+            capability=normalized_capability,
             role=identity.role,
             target_group_id=normalize_id(target_group_id),
             code=PermissionDecisionCode.UNKNOWN_CAPABILITY,
         )
-
-    policy = policies[normalized_capability]
     requested_group_id = normalize_id(target_group_id)
     if identity.role not in policy.allowed_roles:
         return PermissionDecision(
-            capability=normalized_capability.value,
+            capability=normalized_capability,
             role=identity.role,
             target_group_id=requested_group_id,
             code=PermissionDecisionCode.ROLE_DENIED,
@@ -122,7 +160,7 @@ def authorize(
         requested_group_id = requested_group_id or identity.group_id
         if not requested_group_id:
             return PermissionDecision(
-                capability=normalized_capability.value,
+                capability=normalized_capability,
                 role=identity.role,
                 target_group_id="",
                 code=PermissionDecisionCode.GROUP_REQUIRED,
@@ -132,14 +170,14 @@ def authorize(
             and requested_group_id != identity.group_id
         ):
             return PermissionDecision(
-                capability=normalized_capability.value,
+                capability=normalized_capability,
                 role=identity.role,
                 target_group_id=requested_group_id,
                 code=PermissionDecisionCode.OUT_OF_SCOPE,
             )
 
     return PermissionDecision(
-        capability=normalized_capability.value,
+        capability=normalized_capability,
         role=identity.role,
         target_group_id=requested_group_id,
         code=PermissionDecisionCode.ALLOW,

@@ -2,6 +2,7 @@
 
 from .domain.identity import Identity, UserRole, is_bot_mentioned, parse_identity
 from .domain.permissions import (
+    TOOL_PERMISSION_POLICIES,
     Capability,
     CapabilityPolicy,
     PermissionDecision,
@@ -27,6 +28,7 @@ __all__ = [
     "PermissionDecision",
     "PermissionDecisionCode",
     "PermissionScope",
+    "TOOL_PERMISSION_POLICIES",
     "UserRole",
     "is_bot_mentioned",
     "parse_identity",

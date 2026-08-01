@@ -2,7 +2,9 @@
 
 YeBot 是一个面向 QQ 群聊的 AstrBot 插件。项目按里程碑逐步启用能力：先观察消息和验证权限，再接入工具、Agent 编排、确认流程与后台任务。
 
-当前版本处于 M4：M3 身份与权限验收已完成，插件已具备细粒度工具权限、统一工具网关和 OneBot action 适配器。`group.get_members` 可读取当前群成员，写入型工具默认只返回 dry-run 预览；Agent 编排和高风险动作确认仍待后续里程碑。
+当前版本处于 M5：M3 身份与权限、M4 工具网关已完成，插件已具备可解释的主 Agent 路由、受限 SubAgent 编排和 AstrBot function tools。`group.get_members` 可读取当前群成员，写入型工具默认只返回 dry-run 预览；高风险动作确认仍由 M6 负责。
+
+M5 暴露 `yebot_group_get_members`、`yebot_group_kick_member`、`yebot_group_mute_member`、`yebot_group_unmute_member`、`yebot_message_send` 和 `yebot_delegate`。每次调用都会经过 YeBot 工具网关；SubAgent 默认只能读取群成员，不能直接发消息。
 
 ## 本地检查
 

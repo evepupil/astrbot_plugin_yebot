@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from datetime import datetime
 from typing import Any
@@ -11,14 +12,40 @@ from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star, register
 
 try:
-    from .yebot.domain.identity import normalize_id, parse_identity
+    from .yebot.domain.identity import (
+        is_bot_mentioned,
+        normalize_id,
+        parse_identity,
+    )
     from .yebot.domain.policy import LowFrequencyPolicy, PolicyConfig
+    from .yebot.runtime.agents import (
+        AgentBudget,
+        AgentOrchestrator,
+        AgentPlanner,
+        AgentRouter,
+        AgentRunResult,
+        MessageSummary,
+        SubAgentRequest,
+        SubAgentResult,
+        TaskStep,
+    )
     from .yebot.runtime.observer import observe_event
     from .yebot.runtime.tools import ToolContext, ToolResult, ToolResultCode
     from .yebot.runtime.tools.onebot import OneBotToolRuntime
 except ImportError:
-    from yebot.domain.identity import normalize_id, parse_identity
+    from yebot.domain.identity import is_bot_mentioned, normalize_id, parse_identity
     from yebot.domain.policy import LowFrequencyPolicy, PolicyConfig
+    from yebot.runtime.agents import (
+        AgentBudget,
+        AgentOrchestrator,
+        AgentPlanner,
+        AgentRouter,
+        AgentRunResult,
+        MessageSummary,
+        SubAgentRequest,
+        SubAgentResult,
+        TaskStep,
+    )
     from yebot.runtime.observer import observe_event
     from yebot.runtime.tools import ToolContext, ToolResult, ToolResultCode
     from yebot.runtime.tools.onebot import OneBotToolRuntime
@@ -46,6 +73,18 @@ def _as_id_list(value: object) -> tuple[str, ...]:
     return tuple(str(item).strip() for item in value if str(item).strip())
 
 
+def _message_text(event: AstrMessageEvent) -> str:
+    message_obj = getattr(event, "message_obj", None)
+    message_str = getattr(message_obj, "message_str", "")
+    return str(message_str).strip()[:4000]
+
+
+def _request_id(event: AstrMessageEvent) -> str:
+    message_obj = getattr(event, "message_obj", None)
+    message_id = getattr(message_obj, "message_id", "")
+    return str(message_id).strip() or event.unified_msg_origin
+
+
 @register(
     "astrbot_plugin_yebot",
     "YeBot",
@@ -67,6 +106,17 @@ class YeBot(Star):
         self._bot_id = str(values.get("bot_qq_id", "")).strip()
         self._observe_only = _as_bool(values.get("observe_only"), True)
         self._tool_dry_run = _as_bool(values.get("tool_dry_run"), True)
+        self._agent_budget = AgentBudget(
+            max_steps=_as_int(values.get("agent_max_steps"), 6),
+            max_concurrency=_as_int(values.get("agent_max_concurrency"), 1),
+            timeout_seconds=_as_float(values.get("agent_timeout_seconds"), 30.0),
+        )
+        self._agent_router = AgentRouter()
+        self._agent_planner = AgentPlanner()
+        self._agent_orchestrator = AgentOrchestrator(self._agent_budget)
+        self._subagent_allowed_tools = _as_id_list(
+            values.get("subagent_allowed_tools", ["group.get_members"])
+        )
         self._policy = LowFrequencyPolicy(
             PolicyConfig(
                 observe_only=self._observe_only,
@@ -90,9 +140,9 @@ class YeBot(Star):
     ) -> ToolResult:
         """Execute a registered tool for a platform event.
 
-        M5 will call this entry point after routing an agent request. Keeping
-        identity extraction here ensures every future caller uses the same
-        owner and group-admin rules as message observation.
+        Every Agent and function-tool adapter uses this entry point. Keeping
+        identity extraction here ensures all callers use the same owner and
+        group-admin rules as message observation.
         """
 
         raw_event = getattr(event.message_obj, "raw_message", None)
@@ -127,6 +177,225 @@ class YeBot(Star):
             request_id=request_id,
         )
         return await runtime.execute(normalized_name, arguments, context)
+
+    async def _run_single_tool(
+        self,
+        event: AstrMessageEvent,
+        tool_name: str,
+        arguments: Mapping[str, object],
+    ) -> AgentRunResult:
+        raw_event = getattr(event.message_obj, "raw_message", None)
+        if not isinstance(raw_event, Mapping):
+            raise ValueError("event unavailable")
+        identity = parse_identity(raw_event, self._owner_ids)
+        summary = MessageSummary(
+            _message_text(event),
+            identity.user_id,
+            identity.group_id,
+            identity.role,
+            is_bot_mentioned(raw_event, event.get_self_id() or self._bot_id),
+            _request_id(event),
+        )
+        route = self._agent_router.route(
+            summary,
+            requested_tool=tool_name,
+            tool_arguments=arguments,
+        )
+        plan = self._agent_planner.build(route, plan_id=summary.request_id)
+
+        async def invoke(step: TaskStep) -> ToolResult:
+            return await self.execute_tool(
+                event,
+                step.target,
+                step.arguments,
+                request_id=summary.request_id,
+            )
+
+        return await self._agent_orchestrator.run(plan, tool_executor=invoke)
+
+    async def _run_subagent(
+        self,
+        event: AstrMessageEvent,
+        request: SubAgentRequest,
+    ) -> SubAgentResult:
+        try:
+            from astrbot.core.agent.tool import ToolSet
+
+            tool_set = ToolSet()
+            tool_manager = self.context.get_llm_tool_manager()
+            exposed_names = {
+                "group.get_members": "yebot_group_get_members",
+                "group.kick_member": "yebot_group_kick_member",
+                "group.mute_member": "yebot_group_mute_member",
+                "group.unmute_member": "yebot_group_unmute_member",
+                "message.send": "yebot_message_send",
+            }
+            for tool_name in request.allowed_tools:
+                exposed_name = exposed_names.get(tool_name)
+                if exposed_name is None:
+                    continue
+                tool = tool_manager.get_func(exposed_name)
+                if tool is not None:
+                    tool_set.add_tool(tool)
+
+            provider_id = await self.context.get_current_chat_provider_id(
+                event.unified_msg_origin
+            )
+            response = await self.context.tool_loop_agent(
+                event=event,
+                chat_provider_id=provider_id,
+                prompt=request.task,
+                system_prompt=(
+                    "You are a restricted YeBot SubAgent. Return a concise result. "
+                    "Use only the supplied read-only tools. Never send messages or "
+                    "perform group administration."
+                ),
+                tools=tool_set,
+                max_steps=self._agent_budget.max_steps,
+                tool_call_timeout=int(self._agent_budget.timeout_seconds),
+            )
+            completion = str(getattr(response, "completion_text", "")).strip()
+            return SubAgentResult(True, completion, used_tools=request.allowed_tools)
+        except Exception as error:
+            return SubAgentResult(False, error=type(error).__name__)
+
+    @staticmethod
+    def _encode_run(result: AgentRunResult) -> str:
+        values = [outcome.value for outcome in result.outcomes if outcome.ok]
+        payload = {
+            "status": result.status.value,
+            "summary": result.summary,
+            "result": values[0] if len(values) == 1 else values,
+        }
+        return json.dumps(payload, ensure_ascii=False, default=str)
+
+    @filter.llm_tool(name="yebot_group_get_members")
+    async def llm_group_get_members(self, event: AstrMessageEvent) -> str:
+        """读取当前群成员。"""
+
+        result = await self._run_single_tool(event, "group.get_members", {})
+        return self._encode_run(result)
+
+    @filter.llm_tool(name="yebot_group_kick_member")
+    async def llm_group_kick_member(
+        self,
+        event: AstrMessageEvent,
+        user_id: str,
+        reason: str = "",
+    ) -> str:
+        """请求移出当前群的一名成员。
+
+        Args:
+            user_id(string): 要操作的 QQ 号
+            reason(string): 操作原因
+        """
+        result = await self._run_single_tool(
+            event,
+            "group.kick_member",
+            {"user_id": user_id, "reason": reason},
+        )
+        return self._encode_run(result)
+
+    @filter.llm_tool(name="yebot_group_mute_member")
+    async def llm_group_mute_member(
+        self,
+        event: AstrMessageEvent,
+        user_id: str,
+        duration_seconds: float,
+        reason: str = "",
+    ) -> str:
+        """请求禁言当前群的一名成员。
+
+        Args:
+            user_id(string): 要操作的 QQ 号
+            duration_seconds(number): 禁言秒数
+            reason(string): 操作原因
+        """
+        duration: object = duration_seconds
+        if isinstance(duration_seconds, float) and duration_seconds.is_integer():
+            duration = int(duration_seconds)
+        result = await self._run_single_tool(
+            event,
+            "group.mute_member",
+            {
+                "user_id": user_id,
+                "duration_seconds": duration,
+                "reason": reason,
+            },
+        )
+        return self._encode_run(result)
+
+    @filter.llm_tool(name="yebot_group_unmute_member")
+    async def llm_group_unmute_member(
+        self,
+        event: AstrMessageEvent,
+        user_id: str,
+    ) -> str:
+        """解除当前群一名成员的禁言。
+
+        Args:
+            user_id(string): 要操作的 QQ 号
+        """
+        result = await self._run_single_tool(
+            event,
+            "group.unmute_member",
+            {"user_id": user_id},
+        )
+        return self._encode_run(result)
+
+    @filter.llm_tool(name="yebot_message_send")
+    async def llm_message_send(self, event: AstrMessageEvent, message: str) -> str:
+        """向当前群发送一条消息。
+
+        Args:
+            message(string): 要发送的消息正文
+        """
+        result = await self._run_single_tool(
+            event,
+            "message.send",
+            {"message": message},
+        )
+        return self._encode_run(result)
+
+    @filter.llm_tool(name="yebot_delegate")
+    async def llm_delegate(
+        self,
+        event: AstrMessageEvent,
+        task: str,
+        agent: str = "research",
+    ) -> str:
+        """把只读查询交给受限 SubAgent，并返回汇总结果。
+
+        Args:
+            task(string): 要处理的只读任务
+            agent(string): SubAgent 名称
+        """
+        raw_event = getattr(event.message_obj, "raw_message", None)
+        if not isinstance(raw_event, Mapping):
+            return json.dumps(
+                {"status": "failed", "summary": "event unavailable"},
+                ensure_ascii=False,
+            )
+        identity = parse_identity(raw_event, self._owner_ids)
+        summary = MessageSummary(
+            task,
+            identity.user_id,
+            identity.group_id,
+            identity.role,
+            is_bot_mentioned(raw_event, event.get_self_id() or self._bot_id),
+            _request_id(event),
+        )
+        route = self._agent_router.route(summary, requested_subagent=agent)
+        plan = self._agent_planner.build(
+            route,
+            plan_id=summary.request_id,
+            subagent_tools={agent.strip().lower(): self._subagent_allowed_tools},
+        )
+        result = await self._agent_orchestrator.run(
+            plan,
+            subagent_executor=lambda request: self._run_subagent(event, request),
+        )
+        return self._encode_run(result)
 
     @filter.platform_adapter_type(filter.PlatformAdapterType.AIOCQHTTP)
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)

@@ -71,5 +71,40 @@
     "title": "机器人 QQ 号",
     "description": "可选备用值；优先使用 AstrBot 事件自带的机器人 QQ 号，留空即可自动识别。",
     "default": ""
+  },
+  "agent_max_steps": {
+    "type": "int",
+    "title": "Agent 最大步骤数",
+    "description": "一次主 Agent 或 SubAgent 任务最多执行的步骤数。",
+    "default": 6,
+    "minimum": 1,
+    "maximum": 100
+  },
+  "agent_max_concurrency": {
+    "type": "int",
+    "title": "Agent 最大并发数",
+    "description": "同一并行任务组允许同时运行的步骤数，默认串行。",
+    "default": 1,
+    "minimum": 1,
+    "maximum": 16
+  },
+  "agent_timeout_seconds": {
+    "type": "float",
+    "title": "Agent 总超时秒数",
+    "description": "一次编排任务的总执行时间上限。",
+    "default": 30,
+    "minimum": 0.1,
+    "maximum": 300
+  },
+  "subagent_allowed_tools": {
+    "type": "list",
+    "title": "SubAgent 工具白名单",
+    "description": "SubAgent 只可使用这些工具；消息发送工具会被硬性拒绝。",
+    "items": {
+      "type": "string"
+    },
+    "default": [
+      "group.get_members"
+    ]
   }
 }

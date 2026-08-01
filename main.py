@@ -9,6 +9,7 @@ from typing import Any
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, filter
+from astrbot.api.provider import ProviderRequest
 from astrbot.api.star import Context, Star, register
 
 try:
@@ -83,6 +84,25 @@ def _request_id(event: AstrMessageEvent) -> str:
     message_obj = getattr(event, "message_obj", None)
     message_id = getattr(message_obj, "message_id", "")
     return str(message_id).strip() or event.unified_msg_origin
+
+
+def _has_yebot_tools(request: ProviderRequest) -> bool:
+    tool_set = request.func_tool
+    tools = getattr(tool_set, "func_list", ()) if tool_set is not None else ()
+    return any(str(getattr(tool, "name", "")).startswith("yebot_") for tool in tools)
+
+
+_AGENT_TOOL_GUIDANCE = """\
+YeBot 工具选择规则：
+- 根据用户的自然语言意图自行选择工具，用户不需要说出工具名或函数名。
+- 用户询问本群成员、人数、昵称或群角色时，调用 yebot_group_get_members。
+- 用户明确要求踢人、禁言或解禁时，先确认目标 QQ 号和时长是否清楚，
+  再调用对应的 YeBot 工具；信息不全就先追问。
+- 用户要求向当前群发送指定内容时，调用 yebot_message_send；普通聊天回复不要调用它。
+- 需要把只读查询交给专门步骤整理时，调用 yebot_delegate；SubAgent 只能使用
+  提供的白名单工具，不能发消息或管理群。
+- 工具返回权限拒绝、dry-run 或错误状态时，必须如实说明状态，不能声称动作已经完成。
+"""
 
 
 @register(
@@ -177,6 +197,22 @@ class YeBot(Star):
             request_id=request_id,
         )
         return await runtime.execute(normalized_name, arguments, context)
+
+    @filter.on_llm_request()
+    async def guide_agent_tool_selection(
+        self,
+        event: AstrMessageEvent,
+        request: ProviderRequest,
+    ) -> None:
+        """Tell the main Agent how to choose YeBot tools from user intent."""
+
+        del event
+        if _AGENT_TOOL_GUIDANCE not in request.system_prompt and _has_yebot_tools(
+            request
+        ):
+            request.system_prompt = (
+                f"{request.system_prompt.rstrip()}\n\n{_AGENT_TOOL_GUIDANCE}"
+            )
 
     async def _run_single_tool(
         self,

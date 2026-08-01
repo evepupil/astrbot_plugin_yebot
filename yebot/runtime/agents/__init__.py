@@ -16,6 +16,7 @@ from .models import (
 )
 from .orchestrator import AgentOrchestrator, SubAgentExecutor, ToolExecutor
 from .router import AgentPlanner, AgentRouter
+from .tracker import AgentRequestTracker, Reservation
 
 __all__ = [
     "AgentBudget",
@@ -24,9 +25,11 @@ __all__ = [
     "AgentPlanner",
     "AgentRunResult",
     "AgentRouter",
+    "AgentRequestTracker",
     "MessageSummary",
     "RouteDecision",
     "RouteKind",
+    "Reservation",
     "RunStatus",
     "StepKind",
     "StepOutcome",

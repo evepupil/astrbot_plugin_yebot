@@ -37,7 +37,7 @@ AstrBot 主 Agent/function tool
 
 ## 当前实现
 
-`models.py` 定义消息摘要、路由决定、任务步骤、计划、预算、SubAgent 请求/结果和运行结果。`router.py` 提供显式意图路由和计划构造。`orchestrator.py` 以串行步骤为默认，支持同组并发、总超时、步骤上限、异常收敛和稳定汇总。
+`models.py` 定义消息摘要、路由决定、任务步骤、计划、预算、SubAgent 请求/结果和运行结果。`router.py` 提供显式意图路由和计划构造。`orchestrator.py` 以串行步骤为默认，支持同组并发、总超时、步骤上限、异常收敛和稳定汇总。`tracker.py` 按请求 ID 累计主 Agent 连续工具调用，防止模型通过多次函数调用绕过总步骤和总超时预算。
 
 `main.py` 已通过 `@filter.llm_tool` 暴露以下 AstrBot 工具，并通过 `@filter.on_llm_request` 提供自然语言工具选择规则：
 
@@ -52,7 +52,7 @@ AstrBot 主 Agent/function tool
 
 ## 验证方式
 
-`tests/test_agents.py` 覆盖可解释路由、工具/SubAgent 计划、SubAgent 发消息禁配、串行多工具、步骤上限、异常收敛、总超时和 SubAgent 结果汇总。与 M4 工具网关及 OneBot 适配测试合并后，当前本地测试为 64 项；Ruff、格式检查和 strict mypy 均通过。容器内还验证了工具选择规则只注入一次，6 个 AstrBot 工具均能注册。
+`tests/test_agents.py` 覆盖可解释路由、工具/SubAgent 计划、SubAgent 发消息禁配、串行多工具、步骤上限、异常收敛、总超时和 SubAgent 结果汇总；`tests/test_agent_tracker.py` 覆盖跨函数调用的步骤上限、总超时和空请求隔离。与 M4 工具网关及 OneBot 适配测试合并后，当前本地测试为 67 项；Ruff、格式检查和 strict mypy 均通过。容器内还验证了工具选择规则只注入一次，6 个 AstrBot 工具均能注册。
 
 运行中的 AstrBot 验收需要：重载插件后用自然语言询问“本群有多少人”或“帮我看看群里有哪些人”，确认主 Agent 自动选择 `yebot_group_get_members` 并返回统一 JSON 状态；在默认配置下提出禁言或踢人请求，确认只返回 dry-run 预览；提出只读整理任务，确认 `yebot_delegate` 自动选择并且 SubAgent 只能使用只读白名单。
 

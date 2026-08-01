@@ -23,9 +23,11 @@ try:
         AgentBudget,
         AgentOrchestrator,
         AgentPlanner,
+        AgentRequestTracker,
         AgentRouter,
         AgentRunResult,
         MessageSummary,
+        RunStatus,
         SubAgentRequest,
         SubAgentResult,
         TaskStep,
@@ -40,9 +42,11 @@ except ImportError:
         AgentBudget,
         AgentOrchestrator,
         AgentPlanner,
+        AgentRequestTracker,
         AgentRouter,
         AgentRunResult,
         MessageSummary,
+        RunStatus,
         SubAgentRequest,
         SubAgentResult,
         TaskStep,
@@ -134,6 +138,7 @@ class YeBot(Star):
         self._agent_router = AgentRouter()
         self._agent_planner = AgentPlanner()
         self._agent_orchestrator = AgentOrchestrator(self._agent_budget)
+        self._agent_request_tracker = AgentRequestTracker(self._agent_budget)
         self._subagent_allowed_tools = _as_id_list(
             values.get("subagent_allowed_tools", ["group.get_members"])
         )
@@ -238,6 +243,15 @@ class YeBot(Star):
             tool_arguments=arguments,
         )
         plan = self._agent_planner.build(route, plan_id=summary.request_id)
+        if plan.steps:
+            reservation = self._agent_request_tracker.reserve(summary.request_id)
+            if not reservation.allowed:
+                return AgentRunResult(
+                    reservation.status or RunStatus.FAILED,
+                    plan,
+                    (),
+                    reservation.summary,
+                )
 
         async def invoke(step: TaskStep) -> ToolResult:
             return await self.execute_tool(
@@ -427,6 +441,16 @@ class YeBot(Star):
             plan_id=summary.request_id,
             subagent_tools={agent.strip().lower(): self._subagent_allowed_tools},
         )
+        reservation = self._agent_request_tracker.reserve(summary.request_id)
+        if not reservation.allowed:
+            return self._encode_run(
+                AgentRunResult(
+                    reservation.status or RunStatus.FAILED,
+                    plan,
+                    (),
+                    reservation.summary,
+                )
+            )
         result = await self._agent_orchestrator.run(
             plan,
             subagent_executor=lambda request: self._run_subagent(event, request),

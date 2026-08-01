@@ -14,6 +14,12 @@
     "description": "开启后只记录决策，不自动发言、不调用模型和工具。",
     "default": true
   },
+  "tool_dry_run": {
+    "type": "bool",
+    "title": "工具 dry-run",
+    "description": "开启后读取工具正常执行，发消息、踢人和禁言只返回预览，不调用写入型 OneBot action。",
+    "default": true
+  },
   "cooldown_seconds": {
     "type": "int",
     "title": "回复冷却秒数",

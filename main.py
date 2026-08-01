@@ -11,11 +11,17 @@ from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star, register
 
 try:
+    from .yebot.domain.identity import normalize_id, parse_identity
     from .yebot.domain.policy import LowFrequencyPolicy, PolicyConfig
     from .yebot.runtime.observer import observe_event
+    from .yebot.runtime.tools import ToolContext, ToolResult, ToolResultCode
+    from .yebot.runtime.tools.onebot import OneBotToolRuntime
 except ImportError:
+    from yebot.domain.identity import normalize_id, parse_identity
     from yebot.domain.policy import LowFrequencyPolicy, PolicyConfig
     from yebot.runtime.observer import observe_event
+    from yebot.runtime.tools import ToolContext, ToolResult, ToolResultCode
+    from yebot.runtime.tools.onebot import OneBotToolRuntime
 
 
 def _as_bool(value: object, default: bool) -> bool:
@@ -47,7 +53,7 @@ def _as_id_list(value: object) -> tuple[str, ...]:
     "0.1.0",
 )
 class YeBot(Star):
-    """M2 runtime: observe group messages without producing side effects."""
+    """YeBot runtime with observation and permission-gated tool execution."""
 
     def __init__(self, context: Context, config: dict[str, Any] | None = None) -> None:
         super().__init__(context, config)
@@ -60,6 +66,7 @@ class YeBot(Star):
         )
         self._bot_id = str(values.get("bot_qq_id", "")).strip()
         self._observe_only = _as_bool(values.get("observe_only"), True)
+        self._tool_dry_run = _as_bool(values.get("tool_dry_run"), True)
         self._policy = LowFrequencyPolicy(
             PolicyConfig(
                 observe_only=self._observe_only,
@@ -71,6 +78,55 @@ class YeBot(Star):
                 require_mention=_as_bool(values.get("require_mention"), True),
             )
         )
+
+    async def execute_tool(
+        self,
+        event: AstrMessageEvent,
+        tool_name: str,
+        arguments: Mapping[str, object] | object,
+        *,
+        request_id: str = "",
+        target_group_id: str | None = None,
+    ) -> ToolResult:
+        """Execute a registered tool for a platform event.
+
+        M5 will call this entry point after routing an agent request. Keeping
+        identity extraction here ensures every future caller uses the same
+        owner and group-admin rules as message observation.
+        """
+
+        raw_event = getattr(event.message_obj, "raw_message", None)
+        normalized_name = tool_name.strip().lower()
+        if not isinstance(raw_event, Mapping):
+            return ToolResult(
+                normalized_name,
+                ToolResultCode.EXECUTION_ERROR,
+                error="event unavailable",
+            )
+        if self._observe_only:
+            return ToolResult(
+                normalized_name,
+                ToolResultCode.EXECUTION_DISABLED,
+                error="observe-only mode",
+            )
+
+        runtime = OneBotToolRuntime.from_event(event, dry_run=self._tool_dry_run)
+        if runtime is None:
+            return ToolResult(
+                normalized_name,
+                ToolResultCode.EXECUTION_ERROR,
+                error="action client unavailable",
+            )
+
+        identity = parse_identity(raw_event, self._owner_ids)
+        context = ToolContext(
+            identity=identity,
+            target_group_id=normalize_id(target_group_id)
+            or normalize_id(raw_event.get("group_id"))
+            or None,
+            request_id=request_id,
+        )
+        return await runtime.execute(normalized_name, arguments, context)
 
     @filter.platform_adapter_type(filter.PlatformAdapterType.AIOCQHTTP)
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)

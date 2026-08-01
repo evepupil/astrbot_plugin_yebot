@@ -20,6 +20,7 @@ from .models import (
     ToolRisk,
     validate_parameters,
 )
+from .onebot import OneBotActionClient, OneBotToolRuntime, resolve_event_action_client
 from .registry import RegisteredTool, ToolRegistrationError, ToolRegistry
 
 __all__ = [
@@ -37,9 +38,12 @@ __all__ = [
     "ToolHandler",
     "ToolRegistrationError",
     "ToolRegistry",
+    "OneBotActionClient",
+    "OneBotToolRuntime",
     "ToolResult",
     "ToolResultCode",
     "ToolRisk",
     "TOOL_CATALOG",
     "validate_parameters",
+    "resolve_event_action_client",
 ]

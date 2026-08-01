@@ -45,6 +45,7 @@ class ToolResultCode(StrEnum):
     UNKNOWN_PERMISSION = "unknown_permission"
     TIMEOUT = "timeout"
     EXECUTION_ERROR = "execution_error"
+    EXECUTION_DISABLED = "execution_disabled"
 
 
 _NAME_PATTERN = re.compile(r"[a-z0-9]+(?:[._-][a-z0-9]+)*")

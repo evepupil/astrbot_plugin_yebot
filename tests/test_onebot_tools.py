@@ -1,0 +1,154 @@
+import asyncio
+from collections.abc import Mapping
+from types import SimpleNamespace
+
+from yebot.domain.identity import Identity, UserRole
+from yebot.runtime.tools import ToolContext, ToolResultCode
+from yebot.runtime.tools.onebot import (
+    OneBotActionClient,
+    OneBotToolRuntime,
+    resolve_event_action_client,
+)
+
+
+class FakeActionClient:
+    def __init__(self, responses: Mapping[str, object]) -> None:
+        self.responses = dict(responses)
+        self.calls: list[tuple[str, dict[str, object]]] = []
+
+    async def call_action(self, action: str, **params: object) -> object:
+        self.calls.append((action, params))
+        response = self.responses.get(action, {})
+        if isinstance(response, BaseException):
+            raise response
+        return response
+
+
+def tool_context(role: UserRole, group_id: str = "100") -> ToolContext:
+    return ToolContext(Identity("42", group_id, role, role.value))
+
+
+def runtime(
+    client: FakeActionClient,
+    *,
+    dry_run: bool = True,
+) -> OneBotToolRuntime:
+    return OneBotToolRuntime.from_client(
+        OneBotActionClient(client.call_action),
+        dry_run=dry_run,
+    )
+
+
+def test_get_members_calls_onebot_and_sanitizes_result() -> None:
+    client = FakeActionClient(
+        {
+            "get_group_member_list": [
+                {
+                    "user_id": 42,
+                    "nickname": " Alice ",
+                    "card": "A",
+                    "role": "member",
+                    "join_time": 123,
+                },
+            ],
+        },
+    )
+
+    result = asyncio.run(
+        runtime(client).execute("group.get_members", {}, tool_context(UserRole.MEMBER))
+    )
+
+    assert result.code is ToolResultCode.SUCCESS
+    assert result.value == {
+        "group_id": "100",
+        "member_count": 1,
+        "members": [
+            {"user_id": "42", "nickname": "Alice", "card": "A", "role": "member"}
+        ],
+    }
+    assert client.calls == [("get_group_member_list", {"group_id": 100})]
+
+
+def test_member_cannot_invoke_kick_action() -> None:
+    client = FakeActionClient({})
+
+    result = asyncio.run(
+        runtime(client).execute(
+            "group.kick_member",
+            {"user_id": "99"},
+            tool_context(UserRole.MEMBER),
+        )
+    )
+
+    assert result.code is ToolResultCode.ROLE_DENIED
+    assert client.calls == []
+
+
+def test_admin_mutation_is_dry_run_by_default() -> None:
+    client = FakeActionClient({})
+
+    result = asyncio.run(
+        runtime(client).execute(
+            "group.mute_member",
+            {"user_id": "99", "duration_seconds": 60},
+            tool_context(UserRole.GROUP_ADMIN),
+        )
+    )
+
+    assert result.code is ToolResultCode.SUCCESS
+    assert result.value == {
+        "dry_run": True,
+        "action": "set_group_ban",
+        "params": {"group_id": 100, "user_id": 99, "duration": 60},
+    }
+    assert client.calls == []
+
+
+def test_disabled_dry_run_maps_mute_to_onebot_action() -> None:
+    client = FakeActionClient({"set_group_ban": {"status": "ok", "retcode": 0}})
+
+    result = asyncio.run(
+        runtime(client, dry_run=False).execute(
+            "group.unmute_member",
+            {"user_id": "99"},
+            tool_context(UserRole.OWNER),
+        )
+    )
+
+    assert result.code is ToolResultCode.SUCCESS
+    assert result.value == {
+        "dry_run": False,
+        "action": "set_group_ban",
+        "result": {"status": "ok", "retcode": 0},
+    }
+    assert client.calls == [
+        ("set_group_ban", {"group_id": 100, "user_id": 99, "duration": 0})
+    ]
+
+
+def test_non_numeric_onebot_id_is_wrapped_without_calling_platform() -> None:
+    client = FakeActionClient({})
+
+    result = asyncio.run(
+        runtime(client).execute(
+            "group.get_members",
+            {},
+            tool_context(UserRole.MEMBER, group_id="group-x"),
+        )
+    )
+
+    assert result.code is ToolResultCode.EXECUTION_ERROR
+    assert result.error == "ValueError"
+    assert client.calls == []
+
+
+def test_event_action_client_uses_event_bot_api() -> None:
+    client = FakeActionClient({"ping": {"status": "ok"}})
+    event = SimpleNamespace(
+        bot=SimpleNamespace(api=SimpleNamespace(call_action=client.call_action))
+    )
+
+    resolved = resolve_event_action_client(event)
+    assert resolved is not None
+    assert asyncio.run(resolved.call_action("ping")) == {"status": "ok"}
+    assert client.calls == [("ping", {})]

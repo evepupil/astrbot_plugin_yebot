@@ -50,13 +50,16 @@ AstrBot 主 Agent/function tool
 - `yebot_reminder_create/list/cancel/pause/resume`
 - `yebot_file_read`
 - `yebot_web_fetch`
+- `yebot_sticker_consider`
+- `yebot_sticker_search`
+- `yebot_sticker_send`
 - `yebot_delegate`
 
 所有工具最终都调用 YeBot 工具网关。`yebot_delegate` 使用 AstrBot `tool_loop_agent` 运行受限 SubAgent，只注入白名单工具并返回文本汇总；确认入口只能消费原操作者在原群生成的一次性编号。`observe_only=true` 和 `tool_dry_run=true` 仍保持默认值。
 
 ## 验证方式
 
-`tests/test_agents.py` 覆盖可解释路由、工具/SubAgent 计划、SubAgent 发消息禁配、串行多工具、步骤上限、异常收敛、总超时和 SubAgent 结果汇总；`tests/test_agent_tracker.py` 覆盖跨函数调用的步骤上限、总超时和空请求隔离。与 M4-M8 测试合并后，当前本地测试为 82 项；Ruff、格式检查和 strict mypy 均通过。容器内已验证 14 个 AstrBot 工具注册成功。
+`tests/test_agents.py` 覆盖可解释路由、工具/SubAgent 计划、SubAgent 发消息禁配、串行多工具、步骤上限、异常收敛、总超时和 SubAgent 结果汇总；`tests/test_agent_tracker.py` 覆盖跨函数调用的步骤上限、总超时和空请求隔离。与 M4-M8 测试合并后，当前本地全量测试、Ruff 和 strict mypy 均通过。容器内已验证既有 AstrBot 工具注册成功；新增表情工具待重载后做运行态验收。
 
 运行中的 AstrBot 验收需要：用自然语言询问群成员、创建提醒、读取测试文件或公开网页；提出禁言请求确认直接走 dry-run/OneBot action；提出踢人请求确认先返回一次性编号，再由原操作者明确确认；提出只读整理任务确认 SubAgent 只能使用只读白名单。
 

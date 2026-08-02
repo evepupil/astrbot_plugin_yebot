@@ -70,6 +70,20 @@
     "description": "file.read 允许读取的目录；路径会被限制在该目录内。",
     "default": "data/yebot_files"
   },
+  "sticker_store_path": {
+    "type": "string",
+    "title": "表情库存储路径",
+    "description": "表情元数据和图片文件的共享存储目录；默认位于 AstrBot data 目录，NapCat 可读取。",
+    "default": "data/yebot_stickers"
+  },
+  "sticker_max_bytes": {
+    "type": "int",
+    "title": "单张表情图片大小上限",
+    "description": "收藏图片允许的最大字节数，避免模型识图或下载异常占满磁盘。",
+    "default": 10000000,
+    "minimum": 100000,
+    "maximum": 50000000
+  },
   "cooldown_seconds": {
     "type": "int",
     "title": "回复冷却秒数",

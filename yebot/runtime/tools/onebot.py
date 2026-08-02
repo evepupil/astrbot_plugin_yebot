@@ -15,6 +15,7 @@ from ...domain.identity import normalize_id
 from ..guardrails import GuardrailManager
 from ..jobs import Job, JobScheduler
 from ..release import RuntimeMetrics
+from ..stickers import StickerService, StickerStore
 from .catalog import (
     FILE_READ,
     GROUP_GET_MEMBERS,
@@ -27,6 +28,9 @@ from .catalog import (
     REMINDER_LIST,
     REMINDER_PAUSE,
     REMINDER_RESUME,
+    STICKER_CONSIDER,
+    STICKER_SEARCH,
+    STICKER_SEND,
     WEB_FETCH,
 )
 from .gateway import ToolGateway
@@ -83,6 +87,8 @@ class OneBotToolRuntime:
         file_root: str | Path | None = None,
         protect_target_roles: bool = False,
         metrics: RuntimeMetrics | None = None,
+        sticker_store: StickerStore | None = None,
+        event: object | None = None,
     ) -> OneBotToolRuntime:
         registry = ToolRegistry()
         handlers = _OneBotHandlers(
@@ -91,6 +97,8 @@ class OneBotToolRuntime:
             scheduler=scheduler,
             file_root=file_root,
             protect_target_roles=protect_target_roles,
+            sticker_service=(StickerService(sticker_store) if sticker_store else None),
+            event=event,
         )
         registry.register(GROUP_GET_MEMBERS, handlers.get_members)
         registry.register(GROUP_KICK_MEMBER, handlers.kick_member)
@@ -105,6 +113,10 @@ class OneBotToolRuntime:
             registry.register(REMINDER_RESUME, handlers.resume_reminder)
         registry.register(FILE_READ, handlers.read_file)
         registry.register(WEB_FETCH, handlers.fetch_web)
+        if handlers.sticker_service is not None:
+            registry.register(STICKER_CONSIDER, handlers.consider_sticker)
+            registry.register(STICKER_SEARCH, handlers.search_stickers)
+            registry.register(STICKER_SEND, handlers.send_sticker)
         return cls(ToolGateway(registry, guardrails=guardrails, metrics=metrics))
 
     @classmethod
@@ -118,6 +130,7 @@ class OneBotToolRuntime:
         file_root: str | Path | None = None,
         protect_target_roles: bool = False,
         metrics: RuntimeMetrics | None = None,
+        sticker_store: StickerStore | None = None,
     ) -> OneBotToolRuntime | None:
         client = resolve_event_action_client(event)
         if client is None:
@@ -130,6 +143,8 @@ class OneBotToolRuntime:
             file_root=file_root,
             protect_target_roles=protect_target_roles,
             metrics=metrics,
+            sticker_store=sticker_store,
+            event=event,
         )
 
     async def execute(
@@ -159,12 +174,16 @@ class _OneBotHandlers:
         scheduler: JobScheduler | None,
         file_root: str | Path | None,
         protect_target_roles: bool,
+        sticker_service: StickerService | None,
+        event: object | None,
     ) -> None:
         self._client = client
         self._dry_run = dry_run
         self._scheduler = scheduler
         self._file_root = Path(file_root or "data/yebot_files").resolve()
         self._protect_target_roles = protect_target_roles
+        self.sticker_service = sticker_service
+        self._event = event
 
     async def get_members(
         self,
@@ -358,6 +377,57 @@ class _OneBotHandlers:
             "content_type": content_type,
             "truncated": len(data) >= limit,
             "text": data.decode("utf-8", errors="replace"),
+        }
+
+    async def consider_sticker(
+        self,
+        context: ToolContext,
+        arguments: Mapping[str, object],
+    ) -> object:
+        if self.sticker_service is None or self._event is None:
+            raise RuntimeError("sticker service unavailable")
+        return await self.sticker_service.consider(
+            self._event, context.identity, arguments
+        )
+
+    async def search_stickers(
+        self,
+        context: ToolContext,
+        arguments: Mapping[str, object],
+    ) -> object:
+        if self.sticker_service is None:
+            raise RuntimeError("sticker service unavailable")
+        return self.sticker_service.search(context.identity, arguments)
+
+    async def send_sticker(
+        self,
+        context: ToolContext,
+        arguments: Mapping[str, object],
+    ) -> object:
+        if self.sticker_service is None:
+            raise RuntimeError("sticker service unavailable")
+        sticker_id = arguments["sticker_id"]
+        if not isinstance(sticker_id, str):
+            raise ValueError("sticker_id must be a string")
+        record, path = self.sticker_service.get_for_send(
+            context.identity, sticker_id
+        )
+        params: dict[str, object] = {
+            "group_id": _numeric_id(context.target_group_id, "group_id"),
+            "message": [
+                {"type": "image", "data": {"file": path.as_uri()}},
+            ],
+        }
+        result = await self._mutating_action("send_group_msg", params)
+        dry_run = isinstance(result, Mapping) and result.get("dry_run") is True
+        if not dry_run:
+            self.sticker_service.mark_used(context.identity, record.sticker_id)
+        return {
+            "sticker_id": record.sticker_id,
+            "meaning": record.meaning,
+            "sent": not dry_run,
+            "image": path.as_uri(),
+            "result": result,
         }
 
     async def _mutating_action(

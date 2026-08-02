@@ -134,6 +134,60 @@ WEB_FETCH = ToolDefinition(
     risk=ToolRisk.LOW,
 )
 
+STICKER_CONSIDER = ToolDefinition(
+    name="sticker.consider",
+    description=(
+        "After viewing the current message image, decide whether to save it "
+        "with meaning and tags."
+    ),
+    permission="sticker.consider",
+    parameters=(
+        ParameterSpec("should_collect", ParameterType.BOOLEAN),
+        ParameterSpec(
+            "meaning", ParameterType.STRING, required=False, max_length=500
+        ),
+        ParameterSpec("tags", ParameterType.ARRAY, required=False),
+        ParameterSpec(
+            "image_index",
+            ParameterType.INTEGER,
+            required=False,
+            minimum=0,
+            maximum=8,
+        ),
+        ParameterSpec(
+            "confidence",
+            ParameterType.NUMBER,
+            required=False,
+            minimum=0,
+            maximum=1,
+        ),
+    ),
+    risk=ToolRisk.LOW,
+)
+
+STICKER_SEARCH = ToolDefinition(
+    name="sticker.search",
+    description="Search the current group's saved stickers by meaning or tags.",
+    permission="sticker.search",
+    parameters=(
+        ParameterSpec("query", ParameterType.STRING, required=False, max_length=200),
+        ParameterSpec(
+            "limit", ParameterType.INTEGER, required=False, minimum=1, maximum=20
+        ),
+    ),
+    risk=ToolRisk.LOW,
+)
+
+STICKER_SEND = ToolDefinition(
+    name="sticker.send",
+    description="Send one saved sticker to the current group.",
+    permission="sticker.send",
+    parameters=(
+        ParameterSpec("sticker_id", ParameterType.STRING, min_length=1, max_length=100),
+    ),
+    risk=ToolRisk.MEDIUM,
+)
+
 
 TOOL_CATALOG: tuple[ToolDefinition, ...] = (
     GROUP_GET_MEMBERS,
@@ -148,4 +202,7 @@ TOOL_CATALOG: tuple[ToolDefinition, ...] = (
     REMINDER_RESUME,
     FILE_READ,
     WEB_FETCH,
+    STICKER_CONSIDER,
+    STICKER_SEARCH,
+    STICKER_SEND,
 )

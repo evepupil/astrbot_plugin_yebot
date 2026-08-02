@@ -39,6 +39,7 @@ try:
     from .yebot.runtime.jobs import Job, JobScheduler, JsonJobStore
     from .yebot.runtime.observer import observe_event
     from .yebot.runtime.release import AuditLogWriter, RuntimeMetrics
+    from .yebot.runtime.stickers import StickerStore
     from .yebot.runtime.tools import ToolContext, ToolResult, ToolResultCode
     from .yebot.runtime.tools.onebot import (
         OneBotActionClient,
@@ -70,6 +71,7 @@ except ImportError:
     from yebot.runtime.jobs import Job, JobScheduler, JsonJobStore
     from yebot.runtime.observer import observe_event
     from yebot.runtime.release import AuditLogWriter, RuntimeMetrics
+    from yebot.runtime.stickers import StickerStore
     from yebot.runtime.tools import ToolContext, ToolResult, ToolResultCode
     from yebot.runtime.tools.onebot import (
         OneBotActionClient,
@@ -131,6 +133,11 @@ YeBot 工具选择规则：
   只有存在多个合理目标或完全没有可用线索时才追问；禁言缺少时长时才追问时长。
 - 工具成功后，以工具返回的 `params.user_id` 和实际状态为准回复，不能再说“不知道目标”。
 - 用户要求向当前群发送指定内容时，调用 yebot_message_send；普通聊天回复不要调用它。
+- 收到图片并完成识图后，判断图片是否适合以后当表情包使用；应调用表情收藏入口提交
+  should_collect、图片含义和简短标签，即使决定不收藏也要明确提交决定。不要向用户要求
+  说出工具名。表情库按当前群隔离，重复图片不会重复保存。
+- 用户想发表情包时，先按语境调用表情搜索，再从候选中选择合适的一张调用发送入口；
+  发送成功以工具返回的 sent 和 sticker_id 为准，不能凭空声称已发送。
 - 踢人工具返回 confirmation_required 时，只展示确认编号并等待用户明确确认；
   不要在同一轮自动调用 yebot_confirm_action。
 - 用户明确确认后，调用 yebot_confirm_action；确认编号只能由原操作者在原群使用一次。
@@ -187,6 +194,10 @@ class YeBot(Star):
             metrics=self._metrics,
         )
         self._file_root = _as_text(values.get("file_root"), "data/yebot_files")
+        self._sticker_store = StickerStore(
+            _as_text(values.get("sticker_store_path"), "data/yebot_stickers"),
+            max_bytes=_as_int(values.get("sticker_max_bytes"), 10_000_000),
+        )
         self._job_task: asyncio.Task[None] | None = None
         self._agent_budget = AgentBudget(
             max_steps=_as_int(values.get("agent_max_steps"), 6),
@@ -253,6 +264,7 @@ class YeBot(Star):
             file_root=self._file_root,
             protect_target_roles=True,
             metrics=self._metrics,
+            sticker_store=self._sticker_store,
         )
         if runtime is None:
             return ToolResult(
@@ -304,6 +316,7 @@ class YeBot(Star):
             file_root=self._file_root,
             protect_target_roles=True,
             metrics=self._metrics,
+            sticker_store=self._sticker_store,
         )
         if runtime is None:
             return ToolResult(
@@ -454,6 +467,7 @@ class YeBot(Star):
                 "reminder.list": "yebot_reminder_list",
                 "file.read": "yebot_file_read",
                 "web.fetch": "yebot_web_fetch",
+                "sticker.search": "yebot_sticker_search",
             }
             for tool_name in request.allowed_tools:
                 exposed_name = exposed_names.get(tool_name)
@@ -584,6 +598,86 @@ class YeBot(Star):
             {"message": message},
         )
         return self._encode_run(result)
+
+    @filter.llm_tool(name="yebot_sticker_consider")
+    async def llm_sticker_consider(
+        self,
+        event: AstrMessageEvent,
+        should_collect: bool,
+        meaning: str = "",
+        tags: list[str] | None = None,
+        image_index: float = 0,
+        confidence: float = 0,
+    ) -> str:
+        """完成识图后决定是否收藏当前消息中的图片。
+
+        Args:
+            should_collect(boolean): 是否收藏图片。
+            meaning(string): 图片在群聊中的含义。
+            tags(list[string]): 用于检索的简短标签。
+            image_index(number): 当前消息中的图片序号，从 0 开始。
+            confidence(number): 模型对判断的置信度。
+        """
+
+        del confidence
+        index: object = image_index
+        if isinstance(image_index, float) and image_index.is_integer():
+            index = int(image_index)
+        arguments: dict[str, object] = {
+            "should_collect": should_collect,
+            "meaning": meaning,
+            "image_index": index,
+        }
+        if tags is not None:
+            arguments["tags"] = tags
+        return self._encode_run(
+            await self._run_single_tool(event, "sticker.consider", arguments)
+        )
+
+    @filter.llm_tool(name="yebot_sticker_search")
+    async def llm_sticker_search(
+        self,
+        event: AstrMessageEvent,
+        query: str = "",
+        limit: float = 5,
+    ) -> str:
+        """按当前对话语境搜索当前群的表情包。
+
+        Args:
+            query(string): 情绪、场景或含义关键词。
+            limit(number): 最多返回的候选数量。
+        """
+
+        bounded_limit: object = limit
+        if isinstance(limit, float) and limit.is_integer():
+            bounded_limit = int(limit)
+        return self._encode_run(
+            await self._run_single_tool(
+                event,
+                "sticker.search",
+                {"query": query, "limit": bounded_limit},
+            )
+        )
+
+    @filter.llm_tool(name="yebot_sticker_send")
+    async def llm_sticker_send(
+        self,
+        event: AstrMessageEvent,
+        sticker_id: str,
+    ) -> str:
+        """向当前群发送表情库中的一张图片。
+
+        Args:
+            sticker_id(string): 表情搜索结果中的稳定 ID。
+        """
+
+        return self._encode_run(
+            await self._run_single_tool(
+                event,
+                "sticker.send",
+                {"sticker_id": sticker_id},
+            )
+        )
 
     @filter.llm_tool(name="yebot_confirm_action")
     async def llm_confirm_action(

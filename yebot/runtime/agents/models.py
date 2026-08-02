@@ -38,7 +38,9 @@ class RunStatus(StrEnum):
 
 
 _NAME_PATTERN = re.compile(r"[a-z0-9]+(?:[._-][a-z0-9]+)*")
-_FORBIDDEN_SUBAGENT_TOOLS = frozenset({"message.send", "send_message"})
+_FORBIDDEN_SUBAGENT_TOOLS = frozenset(
+    {"message.send", "send_message", "sticker.send", "sticker.consider"}
+)
 
 
 def _mapping(value: Mapping[str, object] | None) -> Mapping[str, object]:

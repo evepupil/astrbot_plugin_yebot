@@ -113,6 +113,15 @@ TOOL_PERMISSION_POLICIES: Final[Mapping[str, CapabilityPolicy]] = MappingProxyTy
         "web.fetch": CapabilityPolicy(
             frozenset({UserRole.OWNER}), PermissionScope.GLOBAL
         ),
+        "sticker.consider": CapabilityPolicy(
+            frozenset(UserRole), PermissionScope.CURRENT_GROUP
+        ),
+        "sticker.search": CapabilityPolicy(
+            frozenset(UserRole), PermissionScope.CURRENT_GROUP
+        ),
+        "sticker.send": CapabilityPolicy(
+            frozenset(UserRole), PermissionScope.CURRENT_GROUP
+        ),
     }
 )
 

@@ -46,6 +46,7 @@ try:
     )
     from .yebot.runtime.observer import observe_event
     from .yebot.runtime.release import AuditLogWriter, RuntimeMetrics
+    from .yebot.runtime.replies import resolve_reply_context
     from .yebot.runtime.stickers import (
         NativeStickerClient,
         StickerService,
@@ -88,6 +89,7 @@ except ImportError:
     )
     from yebot.runtime.observer import observe_event
     from yebot.runtime.release import AuditLogWriter, RuntimeMetrics
+    from yebot.runtime.replies import resolve_reply_context
     from yebot.runtime.stickers import (
         NativeStickerClient,
         StickerService,
@@ -131,7 +133,12 @@ def _as_id_list(value: object) -> tuple[str, ...]:
 def _message_text(event: AstrMessageEvent) -> str:
     message_obj = getattr(event, "message_obj", None)
     message_str = getattr(message_obj, "message_str", "")
-    return str(message_str).strip()[:4000]
+    current = str(message_str).strip()[:4000]
+    get_extra = getattr(event, "get_extra", None)
+    reply_context = get_extra("yebot.reply_context", "") if callable(get_extra) else ""
+    if isinstance(reply_context, str) and reply_context.strip():
+        return f"{current}\n{reply_context}".strip()[:6400]
+    return current
 
 
 def _request_id(event: AstrMessageEvent) -> str:
@@ -356,6 +363,23 @@ class YeBot(Star):
             protected_target_ids=tuple((*self._owner_ids, self._bot_id)),
         )
         return await runtime.execute(normalized_name, arguments, context)
+
+    async def _ensure_reply_context(self, event: AstrMessageEvent) -> str:
+        """Fetch a missing OneBot reply body once for this event."""
+
+        get_extra = getattr(event, "get_extra", None)
+        cached = get_extra("yebot.reply_context", None) if callable(get_extra) else None
+        if isinstance(cached, str):
+            return cached
+        context = await resolve_reply_context(event, resolve_event_action_client(event))
+        set_extra = getattr(event, "set_extra", None)
+        if callable(set_extra):
+            set_extra("yebot.reply_context", context)
+        if context:
+            logger.debug(
+                "YeBot resolved reply context for message=%s", _request_id(event)
+            )
+        return context
 
     async def confirm_tool(
         self,
@@ -629,6 +653,7 @@ class YeBot(Star):
 
     async def _auto_send_sticker(self, event: AstrMessageEvent) -> None:
         async with self._sticker_send_semaphore:
+            await self._ensure_reply_context(event)
             raw_event = getattr(event.message_obj, "raw_message", None)
             if not isinstance(raw_event, Mapping):
                 return
@@ -693,6 +718,9 @@ class YeBot(Star):
     ) -> None:
         """Tell the main Agent how to choose YeBot tools from user intent."""
 
+        reply_context = await self._ensure_reply_context(event)
+        if reply_context and reply_context not in request.prompt:
+            request.prompt = f"{request.prompt.rstrip()}\n\n{reply_context}"
         system_prompt = request.system_prompt.rstrip()
         additions: list[str] = []
         if _AGENT_TOOL_GUIDANCE not in system_prompt and _has_yebot_tools(request):
@@ -719,6 +747,7 @@ class YeBot(Star):
         tool_name: str,
         arguments: Mapping[str, object],
     ) -> AgentRunResult:
+        await self._ensure_reply_context(event)
         raw_event = getattr(event.message_obj, "raw_message", None)
         if not isinstance(raw_event, Mapping):
             raise ValueError("event unavailable")

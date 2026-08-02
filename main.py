@@ -275,7 +275,7 @@ class YeBot(Star):
             PolicyConfig(
                 observe_only=self._observe_only,
                 cooldown_seconds=_as_int(
-                    values.get("sticker_send_cooldown_seconds"), 300
+                    values.get("sticker_send_cooldown_seconds"), 0
                 ),
                 quiet_hours_start=_as_int(
                     values.get("sticker_send_quiet_hours_start"), 0

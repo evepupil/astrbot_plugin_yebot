@@ -123,8 +123,8 @@
   "sticker_send_cooldown_seconds": {
     "type": "int",
     "title": "Automatic sticker cooldown",
-    "description": "Minimum interval between successful automatic sticker reactions in one group.",
-    "default": 300,
+    "description": "Minimum interval between successful automatic sticker reactions in one group. Set to 0 to disable.",
+    "default": 0,
     "minimum": 0,
     "maximum": 86400
   },

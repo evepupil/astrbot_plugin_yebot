@@ -429,7 +429,9 @@ class YeBot(Star):
             raw_event,
             excluded_ids=(bot_id,),
         )
-        return mentioned_ids[0] if len(mentioned_ids) == 1 else user_id
+        if len(mentioned_ids) > 1:
+            raise ValueError("multiple target mentions")
+        return mentioned_ids[0] if mentioned_ids else user_id
 
     async def _run_subagent(
         self,

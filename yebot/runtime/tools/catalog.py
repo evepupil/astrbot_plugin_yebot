@@ -143,9 +143,7 @@ STICKER_CONSIDER = ToolDefinition(
     permission="sticker.consider",
     parameters=(
         ParameterSpec("should_collect", ParameterType.BOOLEAN),
-        ParameterSpec(
-            "meaning", ParameterType.STRING, required=False, max_length=500
-        ),
+        ParameterSpec("meaning", ParameterType.STRING, required=False, max_length=500),
         ParameterSpec("tags", ParameterType.ARRAY, required=False),
         ParameterSpec(
             "image_index",
@@ -188,6 +186,57 @@ STICKER_SEND = ToolDefinition(
     risk=ToolRisk.MEDIUM,
 )
 
+MEMORY_REMEMBER = ToolDefinition(
+    name="memory.remember",
+    description="Store one explicit, scoped fact or preference for later recall.",
+    permission="memory.write",
+    parameters=(
+        ParameterSpec("scope", ParameterType.STRING, required=False, max_length=16),
+        ParameterSpec("topic", ParameterType.STRING, min_length=1, max_length=120),
+        ParameterSpec("content", ParameterType.STRING, min_length=1, max_length=1000),
+        ParameterSpec("kind", ParameterType.STRING, required=False, max_length=20),
+        ParameterSpec("tags", ParameterType.ARRAY, required=False),
+        ParameterSpec(
+            "confidence",
+            ParameterType.NUMBER,
+            required=False,
+            minimum=0,
+            maximum=1,
+        ),
+        ParameterSpec(
+            "expires_days",
+            ParameterType.INTEGER,
+            required=False,
+            minimum=1,
+            maximum=3650,
+        ),
+    ),
+    risk=ToolRisk.LOW,
+)
+
+MEMORY_RECALL = ToolDefinition(
+    name="memory.recall",
+    description="Search memories visible to the current actor and group.",
+    permission="memory.read",
+    parameters=(
+        ParameterSpec("query", ParameterType.STRING, required=False, max_length=200),
+        ParameterSpec(
+            "limit", ParameterType.INTEGER, required=False, minimum=1, maximum=20
+        ),
+    ),
+    risk=ToolRisk.LOW,
+)
+
+MEMORY_FORGET = ToolDefinition(
+    name="memory.forget",
+    description="Forget one visible memory record without deleting its history.",
+    permission="memory.forget",
+    parameters=(
+        ParameterSpec("memory_id", ParameterType.STRING, min_length=1, max_length=100),
+    ),
+    risk=ToolRisk.LOW,
+)
+
 
 TOOL_CATALOG: tuple[ToolDefinition, ...] = (
     GROUP_GET_MEMBERS,
@@ -205,4 +254,7 @@ TOOL_CATALOG: tuple[ToolDefinition, ...] = (
     STICKER_CONSIDER,
     STICKER_SEARCH,
     STICKER_SEND,
+    MEMORY_REMEMBER,
+    MEMORY_RECALL,
+    MEMORY_FORGET,
 )

@@ -14,6 +14,7 @@ from urllib.request import Request, urlopen
 from ...domain.identity import normalize_id
 from ..guardrails import GuardrailManager
 from ..jobs import Job, JobScheduler
+from ..memory import MemoryService
 from ..release import RuntimeMetrics
 from ..stickers import StickerService, StickerStore
 from .catalog import (
@@ -22,6 +23,9 @@ from .catalog import (
     GROUP_KICK_MEMBER,
     GROUP_MUTE_MEMBER,
     GROUP_UNMUTE_MEMBER,
+    MEMORY_FORGET,
+    MEMORY_RECALL,
+    MEMORY_REMEMBER,
     MESSAGE_SEND,
     REMINDER_CANCEL,
     REMINDER_CREATE,
@@ -88,6 +92,7 @@ class OneBotToolRuntime:
         protect_target_roles: bool = False,
         metrics: RuntimeMetrics | None = None,
         sticker_store: StickerStore | None = None,
+        memory_service: MemoryService | None = None,
         event: object | None = None,
     ) -> OneBotToolRuntime:
         registry = ToolRegistry()
@@ -98,6 +103,7 @@ class OneBotToolRuntime:
             file_root=file_root,
             protect_target_roles=protect_target_roles,
             sticker_service=(StickerService(sticker_store) if sticker_store else None),
+            memory_service=memory_service,
             event=event,
         )
         registry.register(GROUP_GET_MEMBERS, handlers.get_members)
@@ -117,6 +123,10 @@ class OneBotToolRuntime:
             registry.register(STICKER_CONSIDER, handlers.consider_sticker)
             registry.register(STICKER_SEARCH, handlers.search_stickers)
             registry.register(STICKER_SEND, handlers.send_sticker)
+        if handlers.memory_service is not None:
+            registry.register(MEMORY_REMEMBER, handlers.remember_memory)
+            registry.register(MEMORY_RECALL, handlers.recall_memory)
+            registry.register(MEMORY_FORGET, handlers.forget_memory)
         return cls(ToolGateway(registry, guardrails=guardrails, metrics=metrics))
 
     @classmethod
@@ -131,6 +141,7 @@ class OneBotToolRuntime:
         protect_target_roles: bool = False,
         metrics: RuntimeMetrics | None = None,
         sticker_store: StickerStore | None = None,
+        memory_service: MemoryService | None = None,
     ) -> OneBotToolRuntime | None:
         client = resolve_event_action_client(event)
         if client is None:
@@ -144,6 +155,7 @@ class OneBotToolRuntime:
             protect_target_roles=protect_target_roles,
             metrics=metrics,
             sticker_store=sticker_store,
+            memory_service=memory_service,
             event=event,
         )
 
@@ -175,6 +187,7 @@ class _OneBotHandlers:
         file_root: str | Path | None,
         protect_target_roles: bool,
         sticker_service: StickerService | None,
+        memory_service: MemoryService | None,
         event: object | None,
     ) -> None:
         self._client = client
@@ -183,6 +196,7 @@ class _OneBotHandlers:
         self._file_root = Path(file_root or "data/yebot_files").resolve()
         self._protect_target_roles = protect_target_roles
         self.sticker_service = sticker_service
+        self.memory_service = memory_service
         self._event = event
 
     async def get_members(
@@ -409,9 +423,7 @@ class _OneBotHandlers:
         sticker_id = arguments["sticker_id"]
         if not isinstance(sticker_id, str):
             raise ValueError("sticker_id must be a string")
-        record, path = self.sticker_service.get_for_send(
-            context.identity, sticker_id
-        )
+        record, path = self.sticker_service.get_for_send(context.identity, sticker_id)
         params: dict[str, object] = {
             "group_id": _numeric_id(context.target_group_id, "group_id"),
             "message": [
@@ -428,6 +440,98 @@ class _OneBotHandlers:
             "sent": not dry_run,
             "image": path.as_uri(),
             "result": result,
+        }
+
+    async def remember_memory(
+        self,
+        context: ToolContext,
+        arguments: Mapping[str, object],
+    ) -> object:
+        if self.memory_service is None:
+            raise RuntimeError("memory service unavailable")
+        scope = arguments.get("scope", "user")
+        topic = arguments["topic"]
+        content = arguments["content"]
+        kind = arguments.get("kind", "fact")
+        tags = arguments.get("tags", [])
+        confidence = arguments.get("confidence", 1.0)
+        expires_days = arguments.get("expires_days")
+        if not isinstance(scope, str) or not isinstance(topic, str):
+            raise ValueError("memory scope and topic must be text")
+        if not isinstance(content, str) or not isinstance(kind, str):
+            raise ValueError("memory content and kind must be text")
+        if not isinstance(tags, list):
+            raise ValueError("memory tags must be a list")
+        if not isinstance(confidence, (int, float)) or isinstance(confidence, bool):
+            raise ValueError("memory confidence must be numeric")
+        if expires_days is not None and (
+            not isinstance(expires_days, int) or isinstance(expires_days, bool)
+        ):
+            raise ValueError("memory expiry must be an integer")
+        record = self.memory_service.remember(
+            context.identity,
+            scope=scope,
+            topic=topic,
+            content=content,
+            kind=kind,
+            tags=tags,
+            confidence=float(confidence),
+            expires_days=expires_days,
+            request_id=context.request_id,
+        )
+        return {
+            "memory_id": record.memory_id,
+            "scope": record.scope.value,
+            "topic": record.topic,
+            "status": record.status.value,
+        }
+
+    async def recall_memory(
+        self,
+        context: ToolContext,
+        arguments: Mapping[str, object],
+    ) -> object:
+        if self.memory_service is None:
+            raise RuntimeError("memory service unavailable")
+        query = arguments.get("query", "")
+        limit = arguments.get("limit", 5)
+        if not isinstance(query, str):
+            raise ValueError("memory query must be text")
+        if not isinstance(limit, int) or isinstance(limit, bool):
+            raise ValueError("memory limit must be an integer")
+        records = self.memory_service.recall(
+            context.identity,
+            query,
+            limit=limit,
+            include_unmatched=True,
+        )
+        return {
+            "memories": [
+                {
+                    "memory_id": record.memory_id,
+                    "scope": record.scope.value,
+                    "kind": record.kind.value,
+                    "topic": record.topic,
+                    "content": record.content,
+                    "tags": list(record.tags),
+                }
+                for record in records
+            ],
+        }
+
+    async def forget_memory(
+        self,
+        context: ToolContext,
+        arguments: Mapping[str, object],
+    ) -> object:
+        if self.memory_service is None:
+            raise RuntimeError("memory service unavailable")
+        memory_id = arguments["memory_id"]
+        if not isinstance(memory_id, str):
+            raise ValueError("memory_id must be text")
+        return {
+            "memory_id": memory_id,
+            "forgotten": self.memory_service.forget(context.identity, memory_id),
         }
 
     async def _mutating_action(

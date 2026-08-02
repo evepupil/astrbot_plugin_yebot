@@ -4,6 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from yebot.domain.identity import Identity, UserRole
+from yebot.runtime.memory import MemoryService, SQLiteMemoryStore
 from yebot.runtime.tools import ToolContext, ToolResultCode
 from yebot.runtime.tools.onebot import (
     OneBotActionClient,
@@ -34,10 +35,12 @@ def runtime(
     client: FakeActionClient,
     *,
     dry_run: bool = True,
+    memory_service: MemoryService | None = None,
 ) -> OneBotToolRuntime:
     return OneBotToolRuntime.from_client(
         OneBotActionClient(client.call_action),
         dry_run=dry_run,
+        memory_service=memory_service,
     )
 
 
@@ -69,6 +72,55 @@ def test_get_members_calls_onebot_and_sanitizes_result() -> None:
         ],
     }
     assert client.calls == [("get_group_member_list", {"group_id": 100})]
+
+
+def test_memory_tools_use_the_same_gateway_and_scope_policy(tmp_path: Path) -> None:
+    service = MemoryService(SQLiteMemoryStore(tmp_path / "memory.db"))
+    client = FakeActionClient({})
+    runtime_instance = runtime(client, memory_service=service)
+
+    remembered = asyncio.run(
+        runtime_instance.execute(
+            "memory.remember",
+            {"topic": "称呼", "content": "叫我乙"},
+            tool_context(UserRole.MEMBER, group_id=""),
+        )
+    )
+    assert remembered.code is ToolResultCode.SUCCESS
+    memory_id = remembered.value["memory_id"]  # type: ignore[index]
+
+    recalled = asyncio.run(
+        runtime_instance.execute(
+            "memory.recall",
+            {"query": "称呼"},
+            tool_context(UserRole.MEMBER, group_id=""),
+        )
+    )
+    assert recalled.code is ToolResultCode.SUCCESS
+    assert recalled.value["memories"][0]["memory_id"] == memory_id  # type: ignore[index]
+
+    other_actor = asyncio.run(
+        runtime_instance.execute(
+            "memory.recall",
+            {"query": "称呼"},
+            ToolContext(Identity("99", "", UserRole.MEMBER, "member")),
+        )
+    )
+    assert other_actor.code is ToolResultCode.SUCCESS
+    assert other_actor.value == {"memories": []}
+
+
+def test_memory_group_write_denial_is_returned_as_role_denied(tmp_path: Path) -> None:
+    service = MemoryService(SQLiteMemoryStore(tmp_path / "memory.db"))
+    result = asyncio.run(
+        runtime(FakeActionClient({}), memory_service=service).execute(
+            "memory.remember",
+            {"scope": "group", "topic": "群规", "content": "管理员维护"},
+            tool_context(UserRole.MEMBER),
+        )
+    )
+
+    assert result.code is ToolResultCode.ROLE_DENIED
 
 
 def test_member_cannot_invoke_kick_action() -> None:

@@ -29,7 +29,7 @@ AstrBot 主 Agent/function tool
 ## 关键决策
 
 - AstrBot 的 LLM function tool 只负责提供模型入口；每次调用先创建路由和计划，再进入 `YeBot.execute_tool`。
-- `on_llm_request` 只在请求包含 YeBot 工具时追加稳定的工具选择规则，让主 Agent 根据自然语言意图自动选择工具；普通闲聊不触发工具。
+- `on_llm_request` 在请求包含 YeBot 工具时追加稳定的工具选择规则，并在开启配置时召回当前可见的少量记忆；主 Agent 根据自然语言意图自动选择工具，普通闲聊不会触发记忆写入。
 - 路由必须携带固定原因，例如 `explicit_tool_request`、`explicit_subagent_request`、`bot_not_mentioned`，便于日志和后续审计。
 - 默认预算为最多 6 步、并发 1、总超时 30 秒，可在插件配置中调整；达到步骤上限后不再执行剩余步骤。
 - 单步异常只返回异常类型，编排器停止后续步骤并汇总失败原因，不把平台异常正文交给模型。
@@ -53,13 +53,16 @@ AstrBot 主 Agent/function tool
 - `yebot_sticker_consider`
 - `yebot_sticker_search`
 - `yebot_sticker_send`
+- `yebot_memory_remember`
+- `yebot_memory_recall`
+- `yebot_memory_forget`
 - `yebot_delegate`
 
-所有工具最终都调用 YeBot 工具网关。`yebot_delegate` 使用 AstrBot `tool_loop_agent` 运行受限 SubAgent，只注入白名单工具并返回文本汇总；确认入口只能消费原操作者在原群生成的一次性编号。`observe_only=true` 和 `tool_dry_run=true` 仍保持默认值。
+所有工具最终都调用 YeBot 工具网关。记忆工具由 `MemoryService` 负责用户/群/主人范围和生命周期，自动召回只注入当前身份可见的有限参考资料。`yebot_delegate` 使用 AstrBot `tool_loop_agent` 运行受限 SubAgent，只注入白名单工具并返回文本汇总；确认入口只能消费原操作者在原群生成的一次性编号。`observe_only=true` 和 `tool_dry_run=true` 仍保持默认值。
 
 ## 验证方式
 
-`tests/test_agents.py` 覆盖可解释路由、工具/SubAgent 计划、SubAgent 发消息禁配、串行多工具、步骤上限、异常收敛、总超时和 SubAgent 结果汇总；`tests/test_agent_tracker.py` 覆盖跨函数调用的步骤上限、总超时和空请求隔离。与 M4-M8 测试合并后，当前本地全量测试、Ruff 和 strict mypy 均通过。容器内已验证既有 AstrBot 工具注册成功；新增表情工具待重载后做运行态验收。
+`tests/test_agents.py` 覆盖可解释路由、工具/SubAgent 计划、SubAgent 发消息禁配、串行多工具、步骤上限、异常收敛、总超时和 SubAgent 结果汇总；`tests/test_agent_tracker.py` 覆盖跨函数调用的步骤上限、总超时和空请求隔离；`tests/test_memory.py` 和 `tests/test_onebot_tools.py` 覆盖记忆工具的持久化和网关范围。与 M4-M9 测试合并后，当前本地全量测试、Ruff 和 strict mypy 均通过。容器内的新增工具仍需重载后做运行态验收。
 
 运行中的 AstrBot 验收需要：用自然语言询问群成员、创建提醒、读取测试文件或公开网页；提出禁言请求确认直接走 dry-run/OneBot action；提出踢人请求确认先返回一次性编号，再由原操作者明确确认；提出只读整理任务确认 SubAgent 只能使用只读白名单。
 
@@ -73,3 +76,4 @@ AstrBot 主 Agent/function tool
 - 2026-08-01：实现可解释路由、不可变任务计划、步骤/并发/超时预算、失败收敛和结果汇总。
 - 2026-08-01：接入 AstrBot function tools 与受限 `yebot_delegate`。
 - 2026-08-02：接入确认、提醒、文件/网页只读工具，并更新容器注册验收。
+- 2026-08-02：接入 M9 记忆自动召回与记住/回忆/忘记工具。

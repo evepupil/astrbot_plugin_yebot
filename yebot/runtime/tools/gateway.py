@@ -14,6 +14,7 @@ from ...domain.permissions import (
     authorize,
 )
 from ..guardrails import GuardrailCode, GuardrailManager
+from ..memory import MemoryAccessError, MemoryContentError
 from ..release import RuntimeMetrics
 from .models import (
     ToolContext,
@@ -144,6 +145,36 @@ class ToolGateway:
             value = await asyncio.wait_for(
                 registered.handler(effective_context, validated_arguments),
                 timeout=definition.timeout_seconds,
+            )
+        except MemoryAccessError as error:
+            if self._guardrails is not None:
+                self._guardrails.complete(
+                    definition.name,
+                    validated_arguments,
+                    context.identity,
+                    request_id=context.request_id,
+                    outcome="permission_denied",
+                )
+            return ToolResult(
+                definition.name,
+                ToolResultCode.ROLE_DENIED,
+                error=str(error),
+                permission=decision,
+            )
+        except MemoryContentError as error:
+            if self._guardrails is not None:
+                self._guardrails.complete(
+                    definition.name,
+                    validated_arguments,
+                    context.identity,
+                    request_id=context.request_id,
+                    outcome="invalid_parameters",
+                )
+            return ToolResult(
+                definition.name,
+                ToolResultCode.INVALID_PARAMETERS,
+                error=str(error),
+                permission=decision,
             )
         except TimeoutError:
             if self._guardrails is not None:

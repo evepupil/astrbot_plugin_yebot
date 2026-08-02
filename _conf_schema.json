@@ -170,5 +170,17 @@
     "default": [
       "group.get_members"
     ]
+  },
+  "memory_auto_recall": {
+    "type": "bool",
+    "title": "自动召回记忆",
+    "description": "在模型请求前注入当前用户和当前群可见的少量相关记忆。",
+    "default": true
+  },
+  "memory_store_path": {
+    "type": "string",
+    "title": "记忆数据库路径",
+    "description": "SQLite 记忆数据库路径；使用相对路径时相对于 AstrBot 工作目录。",
+    "default": "data/yebot_memory.db"
   }
 }

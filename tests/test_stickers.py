@@ -61,6 +61,26 @@ class NativeFaceActionClient(FakeActionClient):
         return {"status": "ok"}
 
 
+class PersonalFaceActionClient(FakeActionClient):
+    async def call_action(self, action: str, **params: object) -> object:
+        self.calls.append((action, params))
+        if action == "add_custom_face":
+            return {"result": 0, "errMsg": "success", "isExist": 1}
+        if action == "fetch_custom_face_detail":
+            return [
+                {
+                    "uin": "1592829658",
+                    "emoId": 7,
+                    "resId": "1592829658_0_0_0_NATIVE_0_0",
+                    "url": "https://p.qpic.cn/qq_expression/native/0",
+                    "md5": hashlib.md5(b"image-data").hexdigest().upper(),
+                    "epId": "0",
+                    "desc": "个人收藏表情",
+                }
+            ]
+        return {"status": "ok"}
+
+
 def identity() -> Identity:
     return Identity("42", "100", UserRole.MEMBER, "member")
 
@@ -272,3 +292,65 @@ def test_native_face_parser_accepts_napcat_detail_shape() -> None:
     assert parsed.emoji_package_id == 2
     assert parsed.key == "native-key"
     assert parsed.md5 == "ABCDEF"
+
+
+def test_native_face_parser_accepts_personal_emoji_detail_shape() -> None:
+    parsed = parse_native_sticker(
+        {
+            "uin": "1592829658",
+            "emoId": 7,
+            "resId": "1592829658_0_0_0_NATIVE_0_0",
+            "url": "https://p.qpic.cn/qq_expression/native/0",
+            "md5": "ABCDEF",
+            "epId": "0",
+            "desc": "个人收藏表情",
+        }
+    )
+
+    assert parsed is not None
+    assert parsed.emoji_id == ""
+    assert parsed.key == ""
+    assert parsed.res_id.endswith("NATIVE_0_0")
+    assert parsed.url.endswith("/0")
+    assert parsed.summary == "个人收藏表情"
+
+
+def test_personal_native_face_is_persisted_and_sent_by_qq_url(tmp_path: Path) -> None:
+    image_path = tmp_path / "source.jpg"
+    image_path.write_bytes(b"image-data")
+    store = StickerStore(tmp_path / "stickers")
+    client = PersonalFaceActionClient()
+    runtime = OneBotToolRuntime.from_client(
+        OneBotActionClient(client.call_action),
+        dry_run=False,
+        sticker_store=store,
+        event=DummyEvent(DummyImage(image_path)),
+    )
+
+    result = asyncio.run(
+        runtime.execute(
+            "sticker.consider",
+            {"should_collect": True, "meaning": "个人收藏", "tags": []},
+            ToolContext(identity()),
+        )
+    )
+
+    assert result.code is ToolResultCode.SUCCESS
+    sticker_id = result.value["sticker"]["sticker_id"]
+    record = store.get(sticker_id, group_id="100")
+    assert record is not None
+    assert record.has_native_asset is True
+    assert record.has_native_face is False
+    sent = asyncio.run(
+        runtime.execute(
+            "sticker.send",
+            {"sticker_id": sticker_id},
+            ToolContext(identity()),
+        )
+    )
+    assert sent.code is ToolResultCode.SUCCESS
+    assert sent.value["format"] == "image_fallback"
+    send_call = next(call for call in client.calls if call[0] == "send_group_msg")
+    assert send_call[1]["message"][0]["data"]["file"].startswith(
+        "https://p.qpic.cn/"
+    )

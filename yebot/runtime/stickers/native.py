@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import inspect
+import logging
 import re
 from collections.abc import Awaitable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class ActionCallable(Protocol):
@@ -19,7 +22,13 @@ class ActionCallable(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class NativeSticker:
-    """Identifiers required by an OneBot ``mface`` message segment."""
+    """Identifiers returned by NapCat for a personal custom face.
+
+    Standard ``mface`` fields are available for some QQ/NapCat versions. The
+    personal-emoji detail API used by the current deployment instead returns a
+    resource ID and URL, which are still useful for native collection and image
+    sending even though they cannot form an ``mface`` segment.
+    """
 
     emoji_id: str
     emoji_package_id: int
@@ -27,12 +36,21 @@ class NativeSticker:
     res_id: str = ""
     md5: str = ""
     summary: str = ""
+    url: str = ""
 
     def __post_init__(self) -> None:
-        if not self.emoji_id.strip() or not self.key.strip():
-            raise ValueError("native sticker requires emoji_id and key")
+        if not (self.emoji_id.strip() and self.key.strip()) and not (
+            self.res_id.strip() or self.url.strip()
+        ):
+            raise ValueError("native sticker requires mface or personal-face fields")
         if self.emoji_package_id < 0:
             raise ValueError("native sticker package ID must be non-negative")
+
+    @property
+    def has_native_face(self) -> bool:
+        """Whether the response contains the fields required by ``mface``."""
+
+        return bool(self.emoji_id.strip() and self.key.strip())
 
 
 class NativeStickerClient:
@@ -54,6 +72,7 @@ class NativeStickerClient:
             md5=normalized_md5,
             is_origin=True,
         )
+        _LOGGER.info("native sticker add response=%s", _compact_response(response))
         candidate = parse_native_sticker(
             response, fallback_md5=normalized_md5, summary=summary
         )
@@ -65,6 +84,9 @@ class NativeStickerClient:
 
     async def list_details(self, *, count: int = 48) -> tuple[NativeSticker, ...]:
         response = await self._call("fetch_custom_face_detail", count=count)
+        _LOGGER.info(
+            "native sticker detail response=%s", _compact_response(response)
+        )
         return parse_native_stickers(response)
 
     async def _find_detail(self, md5: str) -> NativeSticker | None:
@@ -105,14 +127,13 @@ def parse_native_sticker(
         return None
     emoji_id = _text(mapping, "emoji_id", "emojiId", "emojiID")
     key = _text(mapping, "key", "emoji_key", "emojiKey")
-    if not emoji_id or not key:
-        return None
     package = _integer(
         mapping,
         "emoji_package_id",
         "emojiPackageId",
         "package_id",
         "packageId",
+        "epId",
         default=0,
     )
     if package is None or package < 0:
@@ -124,6 +145,7 @@ def parse_native_sticker(
         res_id=_text(mapping, "res_id", "resId", "resource_id", "resourceId"),
         md5=_text(mapping, "md5", "file_md5", "fileMd5") or fallback_md5,
         summary=_text(mapping, "summary", "faceName", "desc", "description") or summary,
+        url=_text(mapping, "url", "image_url", "imageUrl"),
     )
 
 
@@ -150,9 +172,13 @@ def _iter_mappings(value: object) -> tuple[Mapping[str, object], ...]:
 
 def _best_mapping(value: object) -> Mapping[str, object] | None:
     for mapping in _iter_mappings(value):
-        if _text(mapping, "emoji_id", "emojiId", "emojiID") and _text(
+        has_mface = _text(mapping, "emoji_id", "emojiId", "emojiID") and _text(
             mapping, "key", "emoji_key", "emojiKey"
-        ):
+        )
+        has_personal_face = _text(
+            mapping, "res_id", "resId", "resource_id", "resourceId"
+        ) or _text(mapping, "url", "image_url", "imageUrl")
+        if has_mface or has_personal_face:
             return mapping
     return None
 
@@ -175,3 +201,10 @@ def _integer(mapping: Mapping[str, object], *keys: str, default: int) -> int | N
         if isinstance(value, str) and value.strip().lstrip("-").isdigit():
             return int(value.strip())
     return default
+
+
+def _compact_response(value: object, *, limit: int = 1800) -> str:
+    """Keep action diagnostics useful without dumping image payloads."""
+
+    text = repr(value)
+    return text if len(text) <= limit else f"{text[:limit]}..."

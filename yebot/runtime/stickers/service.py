@@ -119,7 +119,7 @@ class StickerService:
     async def ensure_native(self, record: StickerRecord) -> tuple[StickerRecord, bool]:
         """Add one local record to QQ's custom-face library when needed."""
 
-        if self.native_client is None or record.has_native_face:
+        if self.native_client is None or record.has_native_asset:
             return record, False
         try:
             face = await self.native_client.add(
@@ -134,7 +134,7 @@ class StickerService:
                 type(error).__name__,
             )
             return record, False
-        if face is None:
+        if face is None or not (face.has_native_face or face.res_id or face.url):
             _LOGGER.warning(
                 "native sticker sync returned no identifiers sticker=%s",
                 record.sticker_id,
@@ -148,6 +148,7 @@ class StickerService:
             res_id=face.res_id,
             md5=face.md5 or record.digest,
             summary=face.summary or record.meaning,
+            native_url=face.url,
         )
         return (updated or record), updated is not None
 
@@ -159,7 +160,7 @@ class StickerService:
         attempted = 0
         synced = 0
         for record in self.store.list_all():
-            if record.has_native_face:
+            if record.has_native_asset:
                 continue
             attempted += 1
             _, did_sync = await self.ensure_native(record)
@@ -242,5 +243,5 @@ def _serialize(record: StickerRecord) -> dict[str, object]:
         "media_type": record.media_type,
         "use_count": record.use_count,
         "source_group_id": record.group_id,
-        "native_available": record.has_native_face,
+        "native_available": record.has_native_asset,
     }

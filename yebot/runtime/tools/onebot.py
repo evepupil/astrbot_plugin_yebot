@@ -449,7 +449,7 @@ class _OneBotHandlers:
             ]
             send_format = "mface"
         else:
-            image_uri = path.as_uri()
+            image_uri = record.native_url or path.as_uri()
             message = [{"type": "image", "data": {"file": image_uri}}]
             send_format = "image_fallback"
         params: dict[str, object] = {

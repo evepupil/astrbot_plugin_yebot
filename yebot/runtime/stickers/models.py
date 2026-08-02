@@ -27,6 +27,7 @@ class StickerRecord:
     res_id: str = ""
     md5: str = ""
     summary: str = ""
+    native_url: str = ""
 
     def __post_init__(self) -> None:
         required = {
@@ -67,12 +68,19 @@ class StickerRecord:
         object.__setattr__(self, "res_id", self.res_id.strip()[:512])
         object.__setattr__(self, "md5", self.md5.strip().lower()[:64])
         object.__setattr__(self, "summary", self.summary.strip()[:500])
+        object.__setattr__(self, "native_url", self.native_url.strip()[:2048])
 
     @property
     def has_native_face(self) -> bool:
         """Whether NapCat can send this record as a native mface segment."""
 
         return bool(self.emoji_id and self.key)
+
+    @property
+    def has_native_asset(self) -> bool:
+        """Whether QQ returned a native personal-face resource for this record."""
+
+        return bool(self.has_native_face or self.res_id or self.native_url)
 
 
 def _clean_tags(values: tuple[str, ...]) -> tuple[str, ...]:

@@ -132,6 +132,7 @@ class StickerStore:
             res_id=record.res_id,
             md5=record.md5,
             summary=record.summary,
+            native_url=record.native_url,
         )
         self._records[updated.sticker_id] = updated
         self._flush()
@@ -147,6 +148,7 @@ class StickerStore:
         res_id: str = "",
         md5: str = "",
         summary: str = "",
+        native_url: str = "",
     ) -> StickerRecord | None:
         """Persist the QQ-native identifiers returned by NapCat."""
 
@@ -171,6 +173,7 @@ class StickerStore:
             res_id=res_id,
             md5=md5,
             summary=summary,
+            native_url=native_url,
         )
         self._records[updated.sticker_id] = updated
         self._flush()
@@ -260,6 +263,7 @@ def _encode(record: StickerRecord) -> dict[str, object]:
         "res_id": record.res_id,
         "md5": record.md5,
         "summary": record.summary,
+        "native_url": record.native_url,
     }
 
 
@@ -288,6 +292,7 @@ def _decode(value: object) -> StickerRecord | None:
             res_id=str(value.get("res_id", "")),
             md5=str(value.get("md5", "")),
             summary=str(value.get("summary", "")),
+            native_url=str(value.get("native_url", "")),
         )
     except (KeyError, TypeError, ValueError, OverflowError):
         return None

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 from collections.abc import Coroutine, Mapping
 from contextlib import suppress
@@ -459,8 +460,83 @@ class YeBot(Star):
                 attempted,
                 synced,
             )
-            if attempted == synced:
-                self._sticker_native_migration_done = True
+            # Run the bulk migration once per plugin lifetime. A failed item can
+            # still be retried when the sticker is explicitly sent or collected;
+            # retrying the whole library on every group message floods NapCat.
+            self._sticker_native_migration_done = True
+
+    async def _describe_sticker_images(
+        self,
+        event: AstrMessageEvent,
+        image_urls: tuple[str, ...],
+    ) -> str:
+        """Get a text image description before a fallback model loses images."""
+
+        if not image_urls:
+            return ""
+        try:
+            current_provider_id = await self.context.get_current_chat_provider_id(
+                event.unified_msg_origin
+            )
+            config = self.context.get_config()
+            provider_settings = (
+                config.get("provider_settings", {})
+                if isinstance(config, Mapping)
+                else {}
+            )
+            configured_caption_id = (
+                provider_settings.get("default_image_caption_provider_id", "")
+                if isinstance(provider_settings, Mapping)
+                else ""
+            )
+            caption_provider_id = (
+                configured_caption_id.strip()
+                if isinstance(configured_caption_id, str)
+                else ""
+            )
+            candidates = tuple(
+                dict.fromkeys(
+                    provider_id
+                    for provider_id in (caption_provider_id, current_provider_id)
+                    if isinstance(provider_id, str) and provider_id.strip()
+                )
+            )
+            for provider_id in candidates:
+                provider = self.context.get_provider_by_id(provider_id)
+                text_chat = getattr(provider, "text_chat", None)
+                if not callable(text_chat):
+                    continue
+                provider_config = getattr(provider, "provider_config", {})
+                modalities = (
+                    provider_config.get("modalities")
+                    if isinstance(provider_config, Mapping)
+                    else None
+                )
+                if (
+                    provider_id == current_provider_id
+                    and not caption_provider_id
+                    and isinstance(modalities, (list, tuple, set))
+                    and "image" not in modalities
+                ):
+                    continue
+                response = text_chat(
+                    prompt=(
+                        "请按图片顺序用中文简要描述这些图片，说明画面内容、文字和适合表达的情绪。"
+                        "只输出描述，不要回复群友。"
+                    ),
+                    image_urls=list(image_urls),
+                )
+                if inspect.isawaitable(response):
+                    response = await response
+                caption = str(getattr(response, "completion_text", "")).strip()
+                if caption:
+                    return caption[:3000]
+        except Exception as error:
+            logger.debug(
+                "YeBot sticker image caption failed error=%s",
+                type(error).__name__,
+            )
+        return ""
 
     async def _run_restricted_sticker_agent(
         self,
@@ -470,7 +546,7 @@ class YeBot(Star):
         image_urls: tuple[str, ...] = (),
         allowed_tools: tuple[str, ...],
         mode: str,
-    ) -> str:
+    ) -> tuple[str, dict[str, bool]]:
         """Run a background sticker agent with an explicit tool allowlist."""
 
         try:
@@ -484,14 +560,13 @@ class YeBot(Star):
                     tool_set.add_tool(tool)
             if not tool_set:
                 logger.warning("YeBot sticker agent has no registered tools")
-                return ""
+                return "", {}
             provider_id = await self.context.get_current_chat_provider_id(
                 event.unified_msg_origin
             )
             mode_token = _BACKGROUND_TOOL_MODE.set(mode)
-            state_token = _AUTO_STICKER_SEND_STATE.set(
-                {"sent": False} if mode == "sticker_send" else None
-            )
+            state = {"sent": False} if mode == "sticker_send" else {"collected": False}
+            state_token = _AUTO_STICKER_SEND_STATE.set(state)
             try:
                 response = await self.context.tool_loop_agent(
                     event=event,
@@ -511,21 +586,25 @@ class YeBot(Star):
             finally:
                 _AUTO_STICKER_SEND_STATE.reset(state_token)
                 _BACKGROUND_TOOL_MODE.reset(mode_token)
-            return str(getattr(response, "completion_text", "")).strip()
+            return str(getattr(response, "completion_text", "")).strip(), dict(state)
         except Exception as error:
             logger.warning(
                 "YeBot sticker background agent failed mode=%s error=%s",
                 mode,
                 type(error).__name__,
             )
-            return ""
+            return "", {}
 
     async def _auto_collect_sticker(self, event: AstrMessageEvent) -> None:
         async with self._sticker_agent_semaphore:
             image_urls = await self._sticker_service.image_urls(event)
             if not image_urls:
                 return
-            await self._run_restricted_sticker_agent(
+            caption = await self._describe_sticker_images(event, image_urls)
+            caption_hint = (
+                f"\nAstrBot 图片描述（仅作识图参考）：{caption}\n" if caption else ""
+            )
+            _, state = await self._run_restricted_sticker_agent(
                 event,
                 prompt=(
                     "Inspect every image in this group message. Decide whether any "
@@ -534,14 +613,18 @@ class YeBot(Star):
                     "including a concise Chinese meaning and a few search tags. "
                     "For images that are not useful, call it with should_collect "
                     "false. Do not explain the decision to the group."
+                    + caption_hint
                 ),
                 image_urls=image_urls,
                 allowed_tools=("yebot_sticker_consider",),
                 mode="sticker_collect",
             )
             logger.info(
-                "YeBot automatic sticker collection finished message=%s",
+                "YeBot automatic sticker collection finished "
+                "message=%s collected=%s caption=%s",
                 _request_id(event),
+                state.get("collected", False),
+                bool(caption),
             )
 
     async def _auto_send_sticker(self, event: AstrMessageEvent) -> None:
@@ -565,7 +648,8 @@ class YeBot(Star):
             if not send_decision.should_reply:
                 return
             async with self._sticker_agent_semaphore:
-                await self._run_restricted_sticker_agent(
+                message_hint = _message_text(event)
+                _, state = await self._run_restricted_sticker_agent(
                     event,
                     prompt=(
                         "Read the current group conversation and decide whether a "
@@ -573,15 +657,19 @@ class YeBot(Star):
                         "If so, search the current group's sticker library by meaning, "
                         "then send at most one suitable result. If no sticker fits, "
                         "do nothing. "
-                        "Do not send text and do not invent sticker IDs."
+                        "Do not send text and do not invent sticker IDs.\n"
+                        f"Current message text: {message_hint or '[no text]'}"
                     ),
                     allowed_tools=("yebot_sticker_search", "yebot_sticker_send"),
                     mode="sticker_send",
                 )
                 logger.info(
-                    "YeBot automatic sticker send finished group=%s message=%s",
+                    "YeBot automatic sticker send finished "
+                    "group=%s message=%s sent=%s agent_response=%s",
                     identity.group_id,
                     _request_id(event),
+                    state.get("sent", False),
+                    bool(_),
                 )
 
     async def terminate(self) -> None:
@@ -872,9 +960,13 @@ class YeBot(Star):
         }
         if tags is not None:
             arguments["tags"] = tags
-        return self._encode_run(
-            await self._run_single_tool(event, "sticker.consider", arguments)
-        )
+        result = await self._run_single_tool(event, "sticker.consider", arguments)
+        state = _AUTO_STICKER_SEND_STATE.get()
+        if state is not None and result.ok and result.outcomes:
+            value = getattr(result.outcomes[-1].value, "value", None)
+            if isinstance(value, Mapping) and value.get("collected") is True:
+                state["collected"] = True
+        return self._encode_run(result)
 
     @filter.llm_tool(name="yebot_sticker_search")
     async def llm_sticker_search(

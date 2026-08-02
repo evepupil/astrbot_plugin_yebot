@@ -175,8 +175,18 @@ class StickerService:
         if not isinstance(limit, int) or isinstance(limit, bool):
             raise ValueError("limit must be an integer")
         records = self.store.search(query, group_id=identity.group_id, limit=limit)
+        fallback = False
+        if not records and query.strip():
+            # The agent often describes the requested reaction with words that
+            # are absent from the saved tags. Returning recent group-local
+            # candidates gives it a chance to choose instead of treating the
+            # library as empty.
+            bounded_limit = max(1, min(limit, 20))
+            records = self.store.list_for(identity.group_id)[:bounded_limit]
+            fallback = bool(records)
         return {
             "count": len(records),
+            "fallback": fallback,
             "stickers": [_serialize(record) for record in records],
         }
 

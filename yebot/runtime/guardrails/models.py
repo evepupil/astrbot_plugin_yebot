@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from types import MappingProxyType
@@ -103,7 +103,9 @@ class AuditEvent:
     outcome: str
     request_id: str = ""
     target_user_id: str = ""
-    details: Mapping[str, str] = MappingProxyType({})
+    details: Mapping[str, str] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "event_id", self.event_id.strip())

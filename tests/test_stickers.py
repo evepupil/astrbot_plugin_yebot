@@ -141,6 +141,26 @@ def test_service_exposes_provider_readable_image_urls(tmp_path: Path) -> None:
     assert data_urls == ("data:image/jpeg;base64,aW1hZ2UtZGF0YQ==",)
 
 
+def test_service_search_falls_back_to_recent_group_stickers(tmp_path: Path) -> None:
+    store = StickerStore(tmp_path / "stickers")
+    store.add(
+        b"image-data",
+        media_type="image/jpeg",
+        meaning="可爱猫咪",
+        tags=("可爱",),
+        group_id="100",
+        source_message_id="m1",
+        source_user_id="42",
+    )
+    service = StickerService(store)
+
+    result = service.search(identity(), {"query": "完全不存在的语义", "limit": 1})
+
+    assert result["count"] == 1
+    assert result["fallback"] is True
+    assert result["stickers"][0]["meaning"] == "可爱猫咪"
+
+
 def test_runtime_sends_saved_sticker_as_onebot_image(tmp_path: Path) -> None:
     source = tmp_path / "source.png"
     source.write_bytes(b"png-data")

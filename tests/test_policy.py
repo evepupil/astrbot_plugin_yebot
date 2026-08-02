@@ -124,3 +124,26 @@ def test_probability_zero_blocks_reply() -> None:
     )
 
     assert decision.code is DecisionCode.PROBABILITY
+
+
+def test_no_mention_policy_has_independent_group_quota() -> None:
+    policy = LowFrequencyPolicy(
+        PolicyConfig(
+            observe_only=False,
+            cooldown_seconds=0,
+            daily_reply_limit=1,
+            quiet_hours_start=8,
+            quiet_hours_end=9,
+            reply_probability=1,
+            require_mention=False,
+        ),
+        random.Random(1),
+    )
+    identity = group_identity()
+    now = datetime(2026, 7, 31, 12)
+
+    assert policy.evaluate(identity, now, mentioned=False).should_reply
+    policy.commit(identity, now)
+    assert (
+        policy.evaluate(identity, now, mentioned=False).code is DecisionCode.DAILY_LIMIT
+    )

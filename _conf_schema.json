@@ -84,6 +84,74 @@
     "minimum": 100000,
     "maximum": 50000000
   },
+  "sticker_auto_collect": {
+    "type": "bool",
+    "title": "Automatic sticker collection",
+    "description": "Let the restricted image agent decide whether incoming group images are reusable stickers.",
+    "default": true
+  },
+  "sticker_auto_send": {
+    "type": "bool",
+    "title": "Automatic sticker reactions",
+    "description": "Let the restricted sticker agent occasionally search and send one suitable saved sticker.",
+    "default": true
+  },
+  "sticker_agent_max_steps": {
+    "type": "int",
+    "title": "Sticker agent step limit",
+    "description": "Maximum model tool calls for one background sticker decision.",
+    "default": 3,
+    "minimum": 1,
+    "maximum": 10
+  },
+  "sticker_agent_max_concurrency": {
+    "type": "int",
+    "title": "Sticker agent concurrency",
+    "description": "Maximum number of background sticker agents running at once.",
+    "default": 1,
+    "minimum": 1,
+    "maximum": 4
+  },
+  "sticker_send_probability": {
+    "type": "float",
+    "title": "Automatic sticker probability",
+    "description": "Probability of considering an automatic sticker reaction after other gates pass.",
+    "default": 0.05,
+    "minimum": 0,
+    "maximum": 1
+  },
+  "sticker_send_cooldown_seconds": {
+    "type": "int",
+    "title": "Automatic sticker cooldown",
+    "description": "Minimum interval between successful automatic sticker reactions in one group.",
+    "default": 300,
+    "minimum": 0,
+    "maximum": 86400
+  },
+  "sticker_send_daily_limit": {
+    "type": "int",
+    "title": "Automatic sticker daily limit",
+    "description": "Maximum successful automatic sticker reactions per group per day.",
+    "default": 5,
+    "minimum": 0,
+    "maximum": 100
+  },
+  "sticker_send_quiet_hours_start": {
+    "type": "int",
+    "title": "Automatic sticker quiet start",
+    "description": "Local hour at which automatic sticker reactions enter quiet hours.",
+    "default": 0,
+    "minimum": 0,
+    "maximum": 23
+  },
+  "sticker_send_quiet_hours_end": {
+    "type": "int",
+    "title": "Automatic sticker quiet end",
+    "description": "Local hour at which automatic sticker quiet hours end.",
+    "default": 7,
+    "minimum": 0,
+    "maximum": 23
+  },
   "cooldown_seconds": {
     "type": "int",
     "title": "回复冷却秒数",

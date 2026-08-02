@@ -37,6 +37,31 @@ class StickerService:
     def __init__(self, store: StickerStore) -> None:
         self.store = store
 
+    async def image_urls(self, event: object) -> tuple[str, ...]:
+        """Resolve current image components into provider-readable local paths."""
+
+        result: list[str] = []
+        for component in extract_image_components(event):
+            path_method = getattr(component, "convert_to_file_path", None)
+            if callable(path_method):
+                candidate = path_method()
+                path_value = (
+                    await candidate if inspect.isawaitable(candidate) else candidate
+                )
+                if isinstance(path_value, str) and path_value:
+                    result.append(path_value)
+                    continue
+            base64_method = getattr(component, "convert_to_base64", None)
+            if not callable(base64_method):
+                continue
+            candidate = base64_method()
+            encoded = await candidate if inspect.isawaitable(candidate) else candidate
+            if isinstance(encoded, str) and encoded:
+                result.append(
+                    f"data:image/jpeg;base64,{encoded.removeprefix('base64://')}"
+                )
+        return tuple(result)
+
     async def consider(
         self,
         event: object,

@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Mapping
+from collections.abc import Coroutine, Mapping
 from contextlib import suppress
+from contextvars import ContextVar
 from datetime import datetime
 from typing import Any
 
@@ -44,7 +45,11 @@ try:
     )
     from .yebot.runtime.observer import observe_event
     from .yebot.runtime.release import AuditLogWriter, RuntimeMetrics
-    from .yebot.runtime.stickers import StickerStore
+    from .yebot.runtime.stickers import (
+        StickerService,
+        StickerStore,
+        extract_image_components,
+    )
     from .yebot.runtime.tools import ToolContext, ToolResult, ToolResultCode
     from .yebot.runtime.tools.onebot import (
         OneBotActionClient,
@@ -81,7 +86,11 @@ except ImportError:
     )
     from yebot.runtime.observer import observe_event
     from yebot.runtime.release import AuditLogWriter, RuntimeMetrics
-    from yebot.runtime.stickers import StickerStore
+    from yebot.runtime.stickers import (
+        StickerService,
+        StickerStore,
+        extract_image_components,
+    )
     from yebot.runtime.tools import ToolContext, ToolResult, ToolResultCode
     from yebot.runtime.tools.onebot import (
         OneBotActionClient,
@@ -132,6 +141,14 @@ def _has_yebot_tools(request: ProviderRequest) -> bool:
     tool_set = request.func_tool
     tools = getattr(tool_set, "func_list", ()) if tool_set is not None else ()
     return any(str(getattr(tool, "name", "")).startswith("yebot_") for tool in tools)
+
+
+_BACKGROUND_TOOL_MODE: ContextVar[str] = ContextVar(
+    "yebot_background_tool_mode", default=""
+)
+_AUTO_STICKER_SEND_STATE: ContextVar[dict[str, bool] | None] = ContextVar(
+    "yebot_auto_sticker_send_state", default=None
+)
 
 
 _AGENT_TOOL_GUIDANCE = """\
@@ -213,6 +230,15 @@ class YeBot(Star):
             _as_text(values.get("sticker_store_path"), "data/yebot_stickers"),
             max_bytes=_as_int(values.get("sticker_max_bytes"), 10_000_000),
         )
+        self._sticker_service = StickerService(self._sticker_store)
+        self._sticker_auto_collect = _as_bool(values.get("sticker_auto_collect"), True)
+        self._sticker_auto_send = _as_bool(values.get("sticker_auto_send"), True)
+        self._sticker_agent_max_steps = _as_int(
+            values.get("sticker_agent_max_steps"), 3
+        )
+        self._sticker_agent_semaphore = asyncio.Semaphore(
+            max(1, _as_int(values.get("sticker_agent_max_concurrency"), 1))
+        )
         self._memory_auto_recall = _as_bool(values.get("memory_auto_recall"), True)
         self._memory_service = MemoryService(
             SQLiteMemoryStore(
@@ -220,6 +246,7 @@ class YeBot(Star):
             )
         )
         self._job_task: asyncio.Task[None] | None = None
+        self._background_tasks: set[asyncio.Task[None]] = set()
         self._agent_budget = AgentBudget(
             max_steps=_as_int(values.get("agent_max_steps"), 6),
             max_concurrency=_as_int(values.get("agent_max_concurrency"), 1),
@@ -241,6 +268,23 @@ class YeBot(Star):
                 daily_reply_limit=_as_int(values.get("daily_reply_limit"), 20),
                 reply_probability=_as_float(values.get("reply_probability"), 0.2),
                 require_mention=_as_bool(values.get("require_mention"), True),
+            )
+        )
+        self._sticker_send_policy = LowFrequencyPolicy(
+            PolicyConfig(
+                observe_only=self._observe_only,
+                cooldown_seconds=_as_int(
+                    values.get("sticker_send_cooldown_seconds"), 300
+                ),
+                quiet_hours_start=_as_int(
+                    values.get("sticker_send_quiet_hours_start"), 0
+                ),
+                quiet_hours_end=_as_int(values.get("sticker_send_quiet_hours_end"), 7),
+                daily_reply_limit=_as_int(values.get("sticker_send_daily_limit"), 5),
+                reply_probability=_as_float(
+                    values.get("sticker_send_probability"), 0.05
+                ),
+                require_mention=False,
             )
         )
 
@@ -384,13 +428,131 @@ class YeBot(Star):
             await self._job_scheduler.run_due(execute)
             await asyncio.sleep(1)
 
+    def _track_background(self, coroutine: Coroutine[Any, Any, None]) -> None:
+        task = asyncio.create_task(coroutine)
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+
+    async def _run_restricted_sticker_agent(
+        self,
+        event: AstrMessageEvent,
+        *,
+        prompt: str,
+        image_urls: tuple[str, ...] = (),
+        allowed_tools: tuple[str, ...],
+        mode: str,
+    ) -> str:
+        """Run a background sticker agent with an explicit tool allowlist."""
+
+        try:
+            from astrbot.core.agent.tool import ToolSet
+
+            manager = self.context.get_llm_tool_manager()
+            tool_set = ToolSet()
+            for tool_name in allowed_tools:
+                tool = manager.get_func(tool_name)
+                if tool is not None:
+                    tool_set.add_tool(tool)
+            if not tool_set:
+                logger.warning("YeBot sticker agent has no registered tools")
+                return ""
+            provider_id = await self.context.get_current_chat_provider_id(
+                event.unified_msg_origin
+            )
+            mode_token = _BACKGROUND_TOOL_MODE.set(mode)
+            state_token = _AUTO_STICKER_SEND_STATE.set(
+                {"sent": False} if mode == "sticker_send" else None
+            )
+            try:
+                response = await self.context.tool_loop_agent(
+                    event=event,
+                    chat_provider_id=provider_id,
+                    prompt=prompt,
+                    image_urls=list(image_urls),
+                    tools=tool_set,
+                    system_prompt=(
+                        "You are a restricted YeBot sticker background agent. "
+                        "Use only the supplied tools. Never send a text reply, "
+                        "never call tools outside the allowlist, and stop after "
+                        "the requested sticker operation is complete."
+                    ),
+                    max_steps=self._sticker_agent_max_steps,
+                    tool_call_timeout=int(self._agent_budget.timeout_seconds),
+                )
+            finally:
+                _AUTO_STICKER_SEND_STATE.reset(state_token)
+                _BACKGROUND_TOOL_MODE.reset(mode_token)
+            return str(getattr(response, "completion_text", "")).strip()
+        except Exception as error:
+            logger.warning(
+                "YeBot sticker background agent failed mode=%s error=%s",
+                mode,
+                type(error).__name__,
+            )
+            return ""
+
+    async def _auto_collect_sticker(self, event: AstrMessageEvent) -> None:
+        async with self._sticker_agent_semaphore:
+            image_urls = await self._sticker_service.image_urls(event)
+            if not image_urls:
+                return
+            completion = await self._run_restricted_sticker_agent(
+                event,
+                prompt=(
+                    "Inspect every image in this group message. Decide whether any "
+                    "image is genuinely reusable as a group sticker. Call "
+                    "yebot_sticker_consider exactly once for each useful image, "
+                    "including a concise Chinese meaning and a few search tags. "
+                    "For images that are not useful, call it with should_collect "
+                    "false. Do not explain the decision to the group."
+                ),
+                image_urls=image_urls,
+                allowed_tools=("yebot_sticker_consider",),
+                mode="sticker_collect",
+            )
+            logger.debug(
+                "YeBot automatic sticker collection finished message=%s result=%s",
+                _request_id(event),
+                completion[:200],
+            )
+
+    async def _auto_send_sticker(
+        self,
+        event: AstrMessageEvent,
+        decision_scope: str,
+    ) -> None:
+        async with self._sticker_agent_semaphore:
+            completion = await self._run_restricted_sticker_agent(
+                event,
+                prompt=(
+                    "Read the current group conversation and decide whether a saved "
+                    "sticker would add a genuinely funny or useful reaction. If so, "
+                    "search the current group's sticker library by meaning, then "
+                    "send at most one suitable result. If no sticker fits, do nothing. "
+                    "Do not send text and do not invent sticker IDs."
+                ),
+                allowed_tools=("yebot_sticker_search", "yebot_sticker_send"),
+                mode="sticker_send",
+            )
+            logger.debug(
+                "YeBot automatic sticker send finished group=%s message=%s result=%s",
+                decision_scope,
+                _request_id(event),
+                completion[:200],
+            )
+
     async def terminate(self) -> None:
-        if self._job_task is None:
-            return
-        self._job_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await self._job_task
-        self._job_task = None
+        tasks = list(self._background_tasks)
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._background_tasks.clear()
+        if self._job_task is not None:
+            self._job_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._job_task
+            self._job_task = None
 
     @filter.on_llm_request()
     async def guide_agent_tool_selection(
@@ -442,6 +604,7 @@ class YeBot(Star):
             summary,
             requested_tool=tool_name,
             tool_arguments=arguments,
+            allow_unmentioned=bool(_BACKGROUND_TOOL_MODE.get()),
         )
         plan = self._agent_planner.build(route, plan_id=summary.request_id)
         if plan.steps:
@@ -707,13 +870,32 @@ class YeBot(Star):
             sticker_id(string): 表情搜索结果中的稳定 ID。
         """
 
-        return self._encode_run(
-            await self._run_single_tool(
-                event,
-                "sticker.send",
-                {"sticker_id": sticker_id},
+        state = _AUTO_STICKER_SEND_STATE.get()
+        if state is not None and state.get("sent"):
+            return json.dumps(
+                {
+                    "status": "failed",
+                    "summary": "automatic sticker send limit reached",
+                },
+                ensure_ascii=False,
             )
+        result = await self._run_single_tool(
+            event,
+            "sticker.send",
+            {"sticker_id": sticker_id},
         )
+        if state is not None and result.ok:
+            value = result.outcomes[-1].value if result.outcomes else None
+            tool_value = getattr(value, "value", None)
+            if isinstance(tool_value, Mapping) and tool_value.get("sent") is True:
+                state["sent"] = True
+                raw_event = getattr(event.message_obj, "raw_message", None)
+                if isinstance(raw_event, Mapping):
+                    identity = parse_identity(raw_event, self._owner_ids)
+                    self._sticker_send_policy.commit(
+                        identity, datetime.now().astimezone()
+                    )
+        return self._encode_run(result)
 
     @filter.llm_tool(name="yebot_confirm_action")
     async def llm_confirm_action(
@@ -978,3 +1160,27 @@ class YeBot(Star):
             observation.mentioned,
             observation.decision.code,
         )
+        if self._observe_only:
+            return
+
+        if self._sticker_auto_collect and extract_image_components(event):
+            self._track_background(self._auto_collect_sticker(event))
+
+        if self._sticker_auto_send:
+            send_decision = self._sticker_send_policy.evaluate(
+                observation.identity,
+                datetime.now().astimezone(),
+                mentioned=observation.mentioned,
+            )
+            logger.debug(
+                "YeBot sticker send policy group=%s decision=%s",
+                observation.identity.group_id,
+                send_decision.code,
+            )
+            if send_decision.should_reply:
+                self._track_background(
+                    self._auto_send_sticker(
+                        event,
+                        observation.identity.group_id,
+                    )
+                )

@@ -47,6 +47,17 @@ def test_router_returns_explainable_decisions() -> None:
     )
 
 
+def test_background_route_can_use_a_tool_without_a_mention() -> None:
+    route = AgentRouter().route(
+        summary(mentioned=False),
+        requested_tool="sticker.search",
+        allow_unmentioned=True,
+    )
+
+    assert route.kind is RouteKind.TOOL
+    assert route.target == "sticker.search"
+
+
 def test_planner_builds_tool_and_restricted_subagent_steps() -> None:
     router = AgentRouter()
     planner = AgentPlanner()

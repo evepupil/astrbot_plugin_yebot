@@ -30,8 +30,9 @@ class AgentRouter:
         requested_tool: str | None = None,
         tool_arguments: Mapping[str, object] | None = None,
         requested_subagent: str | None = None,
+        allow_unmentioned: bool = False,
     ) -> RouteDecision:
-        if not summary.mentioned and summary.group_id:
+        if not allow_unmentioned and not summary.mentioned and summary.group_id:
             return RouteDecision(RouteKind.IGNORE, "bot_not_mentioned")
         if requested_tool and requested_subagent:
             return RouteDecision(RouteKind.DIRECT, "ambiguous_route_request")

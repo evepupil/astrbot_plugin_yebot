@@ -18,6 +18,13 @@ class DummyImage:
         return str(self.path)
 
 
+class Base64Image:
+    type = "image"
+
+    async def convert_to_base64(self) -> str:
+        return "base64://aW1hZ2UtZGF0YQ=="
+
+
 class DummyEvent:
     def __init__(self, image: DummyImage) -> None:
         self.message_obj = SimpleNamespace(message_id="message-1")
@@ -82,6 +89,18 @@ def test_service_can_decline_without_writing(tmp_path: Path) -> None:
 
     assert result == {"collected": False, "reason": "model_decided_not_useful"}
     assert service.store.list_for("100") == ()
+
+
+def test_service_exposes_provider_readable_image_urls(tmp_path: Path) -> None:
+    image_path = tmp_path / "source.jpg"
+    image_path.write_bytes(b"image-data")
+    service = StickerService(StickerStore(tmp_path / "stickers"))
+
+    local_urls = asyncio.run(service.image_urls(DummyEvent(DummyImage(image_path))))
+    data_urls = asyncio.run(service.image_urls(DummyEvent(Base64Image())))
+
+    assert local_urls == (str(image_path),)
+    assert data_urls == ("data:image/jpeg;base64,aW1hZ2UtZGF0YQ==",)
 
 
 def test_runtime_sends_saved_sticker_as_onebot_image(tmp_path: Path) -> None:

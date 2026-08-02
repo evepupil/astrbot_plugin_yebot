@@ -497,7 +497,7 @@ class YeBot(Star):
             image_urls = await self._sticker_service.image_urls(event)
             if not image_urls:
                 return
-            completion = await self._run_restricted_sticker_agent(
+            await self._run_restricted_sticker_agent(
                 event,
                 prompt=(
                     "Inspect every image in this group message. Decide whether any "
@@ -511,10 +511,9 @@ class YeBot(Star):
                 allowed_tools=("yebot_sticker_consider",),
                 mode="sticker_collect",
             )
-            logger.debug(
-                "YeBot automatic sticker collection finished message=%s result=%s",
+            logger.info(
+                "YeBot automatic sticker collection finished message=%s",
                 _request_id(event),
-                completion[:200],
             )
 
     async def _auto_send_sticker(self, event: AstrMessageEvent) -> None:
@@ -538,7 +537,7 @@ class YeBot(Star):
             if not send_decision.should_reply:
                 return
             async with self._sticker_agent_semaphore:
-                completion = await self._run_restricted_sticker_agent(
+                await self._run_restricted_sticker_agent(
                     event,
                     prompt=(
                         "Read the current group conversation and decide whether a "
@@ -551,12 +550,10 @@ class YeBot(Star):
                     allowed_tools=("yebot_sticker_search", "yebot_sticker_send"),
                     mode="sticker_send",
                 )
-                logger.debug(
-                    "YeBot automatic sticker send finished "
-                    "group=%s message=%s result=%s",
+                logger.info(
+                    "YeBot automatic sticker send finished group=%s message=%s",
                     identity.group_id,
                     _request_id(event),
-                    completion[:200],
                 )
 
     async def terminate(self) -> None:

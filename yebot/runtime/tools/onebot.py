@@ -368,7 +368,12 @@ class _OneBotHandlers:
         if self._dry_run:
             return {"dry_run": True, "action": action, "params": params}
         response = await self._client.call_action(action, **params)
-        return {"dry_run": False, "action": action, "result": _safe_result(response)}
+        return {
+            "dry_run": False,
+            "action": action,
+            "params": params,
+            "result": _safe_result(response),
+        }
 
     async def _check_target_role(
         self,

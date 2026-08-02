@@ -121,6 +121,7 @@ def test_disabled_dry_run_maps_mute_to_onebot_action() -> None:
     assert result.value == {
         "dry_run": False,
         "action": "set_group_ban",
+        "params": {"group_id": 100, "user_id": 99, "duration": 0},
         "result": {"status": "ok", "retcode": 0},
     }
     assert client.calls == [

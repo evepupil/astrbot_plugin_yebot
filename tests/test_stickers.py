@@ -1,9 +1,11 @@
 import asyncio
+import hashlib
 from pathlib import Path
 from types import SimpleNamespace
 
 from yebot.domain.identity import Identity, UserRole
 from yebot.runtime.stickers import StickerService, StickerStore
+from yebot.runtime.stickers.native import parse_native_sticker
 from yebot.runtime.tools import ToolContext, ToolResultCode
 from yebot.runtime.tools.onebot import OneBotActionClient, OneBotToolRuntime
 
@@ -40,6 +42,22 @@ class FakeActionClient:
 
     async def call_action(self, action: str, **params: object) -> object:
         self.calls.append((action, params))
+        return {"status": "ok"}
+
+
+class NativeFaceActionClient(FakeActionClient):
+    async def call_action(self, action: str, **params: object) -> object:
+        self.calls.append((action, params))
+        if action == "add_custom_face":
+            return {
+                "data": {
+                    "emojiId": "emoji-1",
+                    "emojiPackageId": 0,
+                    "key": "native-key",
+                    "resId": "res-1",
+                    "md5": "native-md5",
+                }
+            }
         return {"status": "ok"}
 
 
@@ -135,6 +153,122 @@ def test_runtime_sends_saved_sticker_as_onebot_image(tmp_path: Path) -> None:
     assert considered.code is ToolResultCode.SUCCESS
     assert sent.code is ToolResultCode.SUCCESS
     assert sent.value["sent"] is True
-    assert client.calls[0][0] == "send_group_msg"
-    assert client.calls[0][1]["message"][0]["type"] == "image"
+    send_call = next(call for call in client.calls if call[0] == "send_group_msg")
+    assert send_call[1]["message"][0]["type"] == "image"
     assert store.get(sticker_id, group_id="100").use_count == 1
+
+
+def test_collection_calls_native_custom_face_action(tmp_path: Path) -> None:
+    image_path = tmp_path / "source.jpg"
+    image_path.write_bytes(b"image-data")
+    store = StickerStore(tmp_path / "stickers")
+    client = NativeFaceActionClient()
+    runtime = OneBotToolRuntime.from_client(
+        OneBotActionClient(client.call_action),
+        dry_run=False,
+        sticker_store=store,
+        event=DummyEvent(DummyImage(image_path)),
+    )
+
+    result = asyncio.run(
+        runtime.execute(
+            "sticker.consider",
+            {"should_collect": True, "meaning": "开心", "tags": ["开心"]},
+            ToolContext(identity()),
+        )
+    )
+
+    assert result.code is ToolResultCode.SUCCESS
+    sticker_id = result.value["sticker"]["sticker_id"]
+    record = store.get(sticker_id, group_id="100")
+    assert record is not None and record.has_native_face
+    assert result.value["native_synced"] is True
+    assert client.calls[0][0] == "add_custom_face"
+    assert client.calls[0][1]["md5"] == hashlib.md5(b"image-data").hexdigest()
+
+
+def test_native_face_fields_are_persisted_and_sent_as_mface(tmp_path: Path) -> None:
+    source = tmp_path / "source.png"
+    source.write_bytes(b"png-data")
+    store = StickerStore(tmp_path / "stickers")
+    added = store.add(
+        b"png-data",
+        media_type="image/png",
+        meaning="开心",
+        tags=("开心",),
+        group_id="100",
+        source_message_id="m1",
+        source_user_id="42",
+    )
+    attached = store.attach_native(
+        added.record.sticker_id,
+        emoji_id="emoji-1",
+        emoji_package_id=0,
+        key="native-key",
+        res_id="res-1",
+        md5=added.record.digest,
+        summary="开心",
+    )
+    assert attached is not None and attached.has_native_face
+    restored = StickerStore(tmp_path / "stickers")
+    assert restored.get(added.record.sticker_id, group_id="100") == attached
+
+    client = FakeActionClient()
+    runtime = OneBotToolRuntime.from_client(
+        OneBotActionClient(client.call_action),
+        dry_run=False,
+        sticker_store=restored,
+    )
+    sent = asyncio.run(
+        runtime.execute(
+            "sticker.send",
+            {"sticker_id": added.record.sticker_id},
+            ToolContext(identity()),
+        )
+    )
+
+    assert sent.code is ToolResultCode.SUCCESS
+    assert sent.value["format"] == "mface"
+    assert client.calls == [
+        (
+            "send_group_msg",
+            {
+                "group_id": 100,
+                "message": [
+                    {
+                        "type": "mface",
+                        "data": {
+                            "emoji_package_id": 0,
+                            "emoji_id": "emoji-1",
+                            "key": "native-key",
+                            "summary": "开心",
+                        },
+                    }
+                ],
+            },
+        )
+    ]
+
+
+def test_native_face_parser_accepts_napcat_detail_shape() -> None:
+    parsed = parse_native_sticker(
+        {
+            "data": {
+                "emojiInfoList": [
+                    {
+                        "emojiId": "emoji-1",
+                        "emojiPackageId": "2",
+                        "key": "native-key",
+                        "resId": "res-1",
+                        "md5": "ABCDEF",
+                    }
+                ]
+            }
+        }
+    )
+
+    assert parsed is not None
+    assert parsed.emoji_id == "emoji-1"
+    assert parsed.emoji_package_id == 2
+    assert parsed.key == "native-key"
+    assert parsed.md5 == "ABCDEF"

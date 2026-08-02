@@ -46,6 +46,7 @@ try:
     from .yebot.runtime.observer import observe_event
     from .yebot.runtime.release import AuditLogWriter, RuntimeMetrics
     from .yebot.runtime.stickers import (
+        NativeStickerClient,
         StickerService,
         StickerStore,
         extract_image_components,
@@ -87,6 +88,7 @@ except ImportError:
     from yebot.runtime.observer import observe_event
     from yebot.runtime.release import AuditLogWriter, RuntimeMetrics
     from yebot.runtime.stickers import (
+        NativeStickerClient,
         StickerService,
         StickerStore,
         extract_image_components,
@@ -240,6 +242,8 @@ class YeBot(Star):
             max(1, _as_int(values.get("sticker_agent_max_concurrency"), 1))
         )
         self._sticker_send_semaphore = asyncio.Semaphore(1)
+        self._sticker_native_migration_lock = asyncio.Lock()
+        self._sticker_native_migration_done = False
         self._memory_auto_recall = _as_bool(values.get("memory_auto_recall"), True)
         self._memory_service = MemoryService(
             SQLiteMemoryStore(
@@ -433,6 +437,30 @@ class YeBot(Star):
         task = asyncio.create_task(coroutine)
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
+
+    async def _migrate_native_stickers(self, event: AstrMessageEvent) -> None:
+        """Best-effort one-time migration of local stickers to NapCat."""
+
+        if self._tool_dry_run or self._sticker_native_migration_done:
+            return
+        async with self._sticker_native_migration_lock:
+            if self._sticker_native_migration_done:
+                return
+            client = resolve_event_action_client(event)
+            if client is None:
+                return
+            service = StickerService(
+                self._sticker_store,
+                NativeStickerClient(client.call_action),
+            )
+            attempted, synced = await service.migrate_existing()
+            logger.info(
+                "YeBot native sticker migration attempted=%s synced=%s",
+                attempted,
+                synced,
+            )
+            if attempted == synced:
+                self._sticker_native_migration_done = True
 
     async def _run_restricted_sticker_agent(
         self,
@@ -1177,6 +1205,9 @@ class YeBot(Star):
         )
         if self._observe_only:
             return
+
+        if not self._sticker_native_migration_done and not self._tool_dry_run:
+            self._track_background(self._migrate_native_stickers(event))
 
         if self._sticker_auto_collect and extract_image_components(event):
             self._track_background(self._auto_collect_sticker(event))

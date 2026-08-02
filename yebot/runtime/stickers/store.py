@@ -126,6 +126,51 @@ class StickerStore:
             source_user_id=record.source_user_id,
             created_at=record.created_at,
             use_count=record.use_count + 1,
+            emoji_id=record.emoji_id,
+            emoji_package_id=record.emoji_package_id,
+            key=record.key,
+            res_id=record.res_id,
+            md5=record.md5,
+            summary=record.summary,
+        )
+        self._records[updated.sticker_id] = updated
+        self._flush()
+        return updated
+
+    def attach_native(
+        self,
+        sticker_id: str,
+        *,
+        emoji_id: str,
+        emoji_package_id: int,
+        key: str,
+        res_id: str = "",
+        md5: str = "",
+        summary: str = "",
+    ) -> StickerRecord | None:
+        """Persist the QQ-native identifiers returned by NapCat."""
+
+        record = self._records.get(sticker_id.strip())
+        if record is None:
+            return None
+        updated = StickerRecord(
+            sticker_id=record.sticker_id,
+            digest=record.digest,
+            relative_path=record.relative_path,
+            media_type=record.media_type,
+            meaning=record.meaning,
+            tags=record.tags,
+            group_id=record.group_id,
+            source_message_id=record.source_message_id,
+            source_user_id=record.source_user_id,
+            created_at=record.created_at,
+            use_count=record.use_count,
+            emoji_id=emoji_id,
+            emoji_package_id=emoji_package_id,
+            key=key,
+            res_id=res_id,
+            md5=md5,
+            summary=summary,
         )
         self._records[updated.sticker_id] = updated
         self._flush()
@@ -166,6 +211,7 @@ class StickerStore:
                 record = _decode(value)
                 if record is not None:
                     self._records[record.sticker_id] = record
+                    _make_record_readable(self.root, record.relative_path)
         except (OSError, ValueError, TypeError, KeyError):
             self._records = {}
 
@@ -184,6 +230,7 @@ class StickerStore:
                 stream.flush()
                 os.fsync(stream.fileno())
             os.replace(temporary, self.index_path)
+            _make_readable(self.index_path)
         finally:
             if os.path.exists(temporary):
                 os.unlink(temporary)
@@ -207,6 +254,12 @@ def _encode(record: StickerRecord) -> dict[str, object]:
         "source_user_id": record.source_user_id,
         "created_at": record.created_at.isoformat(),
         "use_count": record.use_count,
+        "emoji_id": record.emoji_id,
+        "emoji_package_id": record.emoji_package_id,
+        "key": record.key,
+        "res_id": record.res_id,
+        "md5": record.md5,
+        "summary": record.summary,
     }
 
 
@@ -229,6 +282,12 @@ def _decode(value: object) -> StickerRecord | None:
             source_user_id=str(value.get("source_user_id", "")),
             created_at=datetime.fromisoformat(str(value["created_at"])),
             use_count=int(value.get("use_count", 0)),
+            emoji_id=str(value.get("emoji_id", "")),
+            emoji_package_id=int(value.get("emoji_package_id", 0)),
+            key=str(value.get("key", "")),
+            res_id=str(value.get("res_id", "")),
+            md5=str(value.get("md5", "")),
+            summary=str(value.get("summary", "")),
         )
     except (KeyError, TypeError, ValueError, OverflowError):
         return None
@@ -244,6 +303,7 @@ def _write_bytes_atomic(path: Path, data: bytes) -> None:
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, path)
+        _make_readable(path)
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)
@@ -260,3 +320,26 @@ def _terms(value: str) -> tuple[str, ...]:
     return tuple(
         term for term in re.findall(r"[\w\u4e00-\u9fff]+", value.lower()) if term
     )
+
+
+def _make_readable(path: Path) -> None:
+    """Allow the NapCat uid to read shared sticker files on Linux."""
+
+    try:
+        mode = path.stat().st_mode
+        path.chmod(mode | 0o444)
+    except OSError:
+        # Windows and read-only mounts can reject chmod; the normal write path
+        # still works there and NapCat will report a useful action error.
+        return
+
+
+def _make_record_readable(root: Path, relative_path: str) -> None:
+    """Repair permissions only for a decoded path inside the store root."""
+
+    path = (root / relative_path).resolve()
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return
+    _make_readable(path)

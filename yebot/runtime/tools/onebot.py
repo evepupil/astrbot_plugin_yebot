@@ -16,7 +16,7 @@ from ..guardrails import GuardrailManager
 from ..jobs import Job, JobScheduler
 from ..memory import MemoryService
 from ..release import RuntimeMetrics
-from ..stickers import StickerService, StickerStore
+from ..stickers import NativeStickerClient, StickerService, StickerStore
 from .catalog import (
     FILE_READ,
     GROUP_GET_MEMBERS,
@@ -102,7 +102,14 @@ class OneBotToolRuntime:
             scheduler=scheduler,
             file_root=file_root,
             protect_target_roles=protect_target_roles,
-            sticker_service=(StickerService(sticker_store) if sticker_store else None),
+            sticker_service=(
+                StickerService(
+                    sticker_store,
+                    NativeStickerClient(client.call_action) if not dry_run else None,
+                )
+                if sticker_store
+                else None
+            ),
             memory_service=memory_service,
             event=event,
         )
@@ -424,11 +431,30 @@ class _OneBotHandlers:
         if not isinstance(sticker_id, str):
             raise ValueError("sticker_id must be a string")
         record, path = self.sticker_service.get_for_send(context.identity, sticker_id)
+        record, _ = await self.sticker_service.ensure_native(record)
+        message: list[dict[str, object]]
+        send_format: str
+        image_uri = ""
+        if record.has_native_face:
+            message = [
+                {
+                    "type": "mface",
+                    "data": {
+                        "emoji_package_id": record.emoji_package_id,
+                        "emoji_id": record.emoji_id,
+                        "key": record.key,
+                        "summary": record.summary or record.meaning,
+                    },
+                }
+            ]
+            send_format = "mface"
+        else:
+            image_uri = path.as_uri()
+            message = [{"type": "image", "data": {"file": image_uri}}]
+            send_format = "image_fallback"
         params: dict[str, object] = {
             "group_id": _numeric_id(context.target_group_id, "group_id"),
-            "message": [
-                {"type": "image", "data": {"file": path.as_uri()}},
-            ],
+            "message": message,
         }
         result = await self._mutating_action("send_group_msg", params)
         dry_run = isinstance(result, Mapping) and result.get("dry_run") is True
@@ -438,7 +464,8 @@ class _OneBotHandlers:
             "sticker_id": record.sticker_id,
             "meaning": record.meaning,
             "sent": not dry_run,
-            "image": path.as_uri(),
+            "format": send_format,
+            "image": image_uri,
             "result": result,
         }
 

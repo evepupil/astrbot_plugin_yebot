@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import base64
 import inspect
+import logging
 import mimetypes
 from collections.abc import Mapping
 from pathlib import Path
 
 from ...domain.identity import Identity
 from .models import StickerRecord
+from .native import NativeStickerClient
 from .store import StickerAddResult, StickerStore
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def extract_image_components(event: object) -> tuple[object, ...]:
@@ -34,8 +38,13 @@ def extract_image_components(event: object) -> tuple[object, ...]:
 class StickerService:
     """Apply model decisions and return bounded metadata for Agent tool calls."""
 
-    def __init__(self, store: StickerStore) -> None:
+    def __init__(
+        self,
+        store: StickerStore,
+        native_client: NativeStickerClient | None = None,
+    ) -> None:
         self.store = store
+        self.native_client = native_client
 
     async def image_urls(self, event: object) -> tuple[str, ...]:
         """Resolve current image components into provider-readable local paths."""
@@ -102,7 +111,60 @@ class StickerService:
             source_user_id=identity.user_id,
             suffix=suffix,
         )
-        return _serialize_add(result)
+        record, native_synced = await self.ensure_native(result.record)
+        payload = _serialize_add(StickerAddResult(record, result.duplicate))
+        payload["native_synced"] = native_synced
+        return payload
+
+    async def ensure_native(self, record: StickerRecord) -> tuple[StickerRecord, bool]:
+        """Add one local record to QQ's custom-face library when needed."""
+
+        if self.native_client is None or record.has_native_face:
+            return record, False
+        try:
+            face = await self.native_client.add(
+                self.store.file_path(record),
+                md5=record.md5,
+                summary=record.summary or record.meaning,
+            )
+        except Exception as error:
+            _LOGGER.warning(
+                "native sticker sync failed sticker=%s error=%s",
+                record.sticker_id,
+                type(error).__name__,
+            )
+            return record, False
+        if face is None:
+            _LOGGER.warning(
+                "native sticker sync returned no identifiers sticker=%s",
+                record.sticker_id,
+            )
+            return record, False
+        updated = self.store.attach_native(
+            record.sticker_id,
+            emoji_id=face.emoji_id,
+            emoji_package_id=face.emoji_package_id,
+            key=face.key,
+            res_id=face.res_id,
+            md5=face.md5 or record.digest,
+            summary=face.summary or record.meaning,
+        )
+        return (updated or record), updated is not None
+
+    async def migrate_existing(self) -> tuple[int, int]:
+        """Best-effort migration of old local stickers to QQ native storage."""
+
+        if self.native_client is None:
+            return 0, 0
+        attempted = 0
+        synced = 0
+        for record in self.store.list_all():
+            if record.has_native_face:
+                continue
+            attempted += 1
+            _, did_sync = await self.ensure_native(record)
+            synced += int(did_sync)
+        return attempted, synced
 
     def search(self, identity: Identity, arguments: Mapping[str, object]) -> object:
         query = arguments.get("query", "")
@@ -180,4 +242,5 @@ def _serialize(record: StickerRecord) -> dict[str, object]:
         "media_type": record.media_type,
         "use_count": record.use_count,
         "source_group_id": record.group_id,
+        "native_available": record.has_native_face,
     }

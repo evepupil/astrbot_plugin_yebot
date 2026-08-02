@@ -16,6 +16,7 @@ from astrbot.api.star import Context, Star, register
 
 try:
     from .yebot.domain.identity import (
+        extract_mentioned_user_ids,
         is_bot_mentioned,
         normalize_id,
         parse_identity,
@@ -45,7 +46,12 @@ try:
         resolve_event_action_client,
     )
 except ImportError:
-    from yebot.domain.identity import is_bot_mentioned, normalize_id, parse_identity
+    from yebot.domain.identity import (
+        extract_mentioned_user_ids,
+        is_bot_mentioned,
+        normalize_id,
+        parse_identity,
+    )
     from yebot.domain.policy import LowFrequencyPolicy, PolicyConfig
     from yebot.runtime.agents import (
         AgentBudget,
@@ -408,6 +414,23 @@ class YeBot(Star):
 
         return await self._agent_orchestrator.run(plan, tool_executor=invoke)
 
+    def _resolve_mentioned_target(
+        self,
+        event: AstrMessageEvent,
+        user_id: str,
+    ) -> str:
+        """Prefer the single explicit non-bot At target in the current message."""
+
+        raw_event = getattr(event.message_obj, "raw_message", None)
+        if not isinstance(raw_event, Mapping):
+            return user_id
+        bot_id = event.get_self_id().strip() or self._bot_id
+        mentioned_ids = extract_mentioned_user_ids(
+            raw_event,
+            excluded_ids=(bot_id,),
+        )
+        return mentioned_ids[0] if len(mentioned_ids) == 1 else user_id
+
     async def _run_subagent(
         self,
         event: AstrMessageEvent,
@@ -490,7 +513,10 @@ class YeBot(Star):
         result = await self._run_single_tool(
             event,
             "group.kick_member",
-            {"user_id": user_id, "reason": reason},
+            {
+                "user_id": self._resolve_mentioned_target(event, user_id),
+                "reason": reason,
+            },
         )
         return self._encode_run(result)
 
@@ -516,7 +542,7 @@ class YeBot(Star):
             event,
             "group.mute_member",
             {
-                "user_id": user_id,
+                "user_id": self._resolve_mentioned_target(event, user_id),
                 "duration_seconds": duration,
                 "reason": reason,
             },
@@ -537,7 +563,7 @@ class YeBot(Star):
         result = await self._run_single_tool(
             event,
             "group.unmute_member",
-            {"user_id": user_id},
+            {"user_id": self._resolve_mentioned_target(event, user_id)},
         )
         return self._encode_run(result)
 

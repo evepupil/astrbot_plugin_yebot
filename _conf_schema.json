@@ -20,6 +20,56 @@
     "description": "开启后读取工具正常执行，发消息、踢人和禁言只返回预览，不调用写入型 OneBot action。",
     "default": true
   },
+  "confirmation_ttl_seconds": {
+    "type": "int",
+    "title": "踢人确认有效期（秒）",
+    "description": "踢人确认编号的有效时间，过期后必须重新发起请求。",
+    "default": 120,
+    "minimum": 10,
+    "maximum": 900
+  },
+  "daily_action_limit": {
+    "type": "int",
+    "title": "每日工具动作上限",
+    "description": "每个操作者在每个群的禁言、解禁和发消息等动作总上限。",
+    "default": 100,
+    "minimum": 1,
+    "maximum": 10000
+  },
+  "daily_kick_limit": {
+    "type": "int",
+    "title": "每日踢人上限",
+    "description": "每个操作者在每个群每日最多执行的踢人次数。",
+    "default": 20,
+    "minimum": 1,
+    "maximum": 1000
+  },
+  "max_concurrent_actions": {
+    "type": "int",
+    "title": "并发工具动作上限",
+    "description": "同时进行的群管理或发消息动作数量。",
+    "default": 2,
+    "minimum": 1,
+    "maximum": 16
+  },
+  "job_store_path": {
+    "type": "string",
+    "title": "后台任务存储路径",
+    "description": "提醒任务的本地 JSON 存储路径；使用相对路径时相对于 AstrBot 工作目录。",
+    "default": "data/yebot_jobs.json"
+  },
+  "audit_log_path": {
+    "type": "string",
+    "title": "审计日志路径",
+    "description": "工具控制事件的脱敏 JSONL 日志路径。",
+    "default": "data/yebot_audit.jsonl"
+  },
+  "file_root": {
+    "type": "string",
+    "title": "文件工具根目录",
+    "description": "file.read 允许读取的目录；路径会被限制在该目录内。",
+    "default": "data/yebot_files"
+  },
   "cooldown_seconds": {
     "type": "int",
     "title": "回复冷却秒数",

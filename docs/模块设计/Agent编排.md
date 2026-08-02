@@ -4,13 +4,13 @@
 - 对应代码：`yebot/runtime/agents/`、`main.py`
 - 所属里程碑：[M5](../roadmap.md#m5)
 - 当前状态：进行中
-- 最近更新时间：2026-08-01
+- 最近更新时间：2026-08-02
 
 ## 职责与边界
 
 路由器只决定走忽略、直接回答、工具或 SubAgent 路径；计划器把决定转换成有限步骤；编排器负责步骤上限、并发上限、总超时、失败收敛和结果汇总。Agent 不直接持有 OneBot 客户端，工具步骤统一调用 `YeBot.execute_tool`。
 
-SubAgent 只能拿到任务文本和工具白名单，不能获取 `message.send`、`send_message` 等对外发消息能力，也不能绕过工具网关。高风险动作的二次确认、审计和额度控制由 M6 接管。
+SubAgent 只能拿到任务文本和工具白名单，不能获取 `message.send`、`send_message` 等对外发消息能力，也不能绕过工具网关。踢人确认、审计和额度控制由网关前置处理，禁言、解禁和发消息不弹确认。
 
 ## 结构与数据流
 
@@ -46,22 +46,27 @@ AstrBot 主 Agent/function tool
 - `yebot_group_mute_member`
 - `yebot_group_unmute_member`
 - `yebot_message_send`
+- `yebot_confirm_action`
+- `yebot_reminder_create/list/cancel/pause/resume`
+- `yebot_file_read`
+- `yebot_web_fetch`
 - `yebot_delegate`
 
-前五个工具最终都调用 YeBot 工具网关。`yebot_delegate` 使用 AstrBot `tool_loop_agent` 运行受限 SubAgent，只注入白名单工具并返回文本汇总。`observe_only=true` 和 `tool_dry_run=true` 仍保持默认值。
+所有工具最终都调用 YeBot 工具网关。`yebot_delegate` 使用 AstrBot `tool_loop_agent` 运行受限 SubAgent，只注入白名单工具并返回文本汇总；确认入口只能消费原操作者在原群生成的一次性编号。`observe_only=true` 和 `tool_dry_run=true` 仍保持默认值。
 
 ## 验证方式
 
-`tests/test_agents.py` 覆盖可解释路由、工具/SubAgent 计划、SubAgent 发消息禁配、串行多工具、步骤上限、异常收敛、总超时和 SubAgent 结果汇总；`tests/test_agent_tracker.py` 覆盖跨函数调用的步骤上限、总超时和空请求隔离。与 M4 工具网关及 OneBot 适配测试合并后，当前本地测试为 67 项；Ruff、格式检查和 strict mypy 均通过。容器内还验证了工具选择规则只注入一次，6 个 AstrBot 工具均能注册。
+`tests/test_agents.py` 覆盖可解释路由、工具/SubAgent 计划、SubAgent 发消息禁配、串行多工具、步骤上限、异常收敛、总超时和 SubAgent 结果汇总；`tests/test_agent_tracker.py` 覆盖跨函数调用的步骤上限、总超时和空请求隔离。与 M4-M8 测试合并后，当前本地测试为 82 项；Ruff、格式检查和 strict mypy 均通过。容器内已验证 14 个 AstrBot 工具注册成功。
 
-运行中的 AstrBot 验收需要：重载插件后用自然语言询问“本群有多少人”或“帮我看看群里有哪些人”，确认主 Agent 自动选择 `yebot_group_get_members` 并返回统一 JSON 状态；在默认配置下提出禁言或踢人请求，确认只返回 dry-run 预览；提出只读整理任务，确认 `yebot_delegate` 自动选择并且 SubAgent 只能使用只读白名单。
+运行中的 AstrBot 验收需要：用自然语言询问群成员、创建提醒、读取测试文件或公开网页；提出禁言请求确认直接走 dry-run/OneBot action；提出踢人请求确认先返回一次性编号，再由原操作者明确确认；提出只读整理任务确认 SubAgent 只能使用只读白名单。
 
 ## 待扩展项
 
-增加持久化任务状态、暂停/恢复、人工接管、跨消息任务关联和更细的 SubAgent 配置。高风险工具的确认、审计、幂等与额度由 M6 实现。
+增加重复定时规则、人工接管、跨消息任务关联和更细的 SubAgent 配置。
 
 ## 改动历史
 
 - 2026-07-31：确定主 Agent 与 SubAgent 的边界。
 - 2026-08-01：实现可解释路由、不可变任务计划、步骤/并发/超时预算、失败收敛和结果汇总。
 - 2026-08-01：接入 AstrBot function tools 与受限 `yebot_delegate`。
+- 2026-08-02：接入确认、提醒、文件/网页只读工具，并更新容器注册验收。

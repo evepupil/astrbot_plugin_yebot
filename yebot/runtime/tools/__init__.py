@@ -1,12 +1,20 @@
 """Tool declarations, registry, and the single execution gateway."""
 
+from ..guardrails import GuardrailManager
 from .catalog import (
+    FILE_READ,
     GROUP_GET_MEMBERS,
     GROUP_KICK_MEMBER,
     GROUP_MUTE_MEMBER,
     GROUP_UNMUTE_MEMBER,
     MESSAGE_SEND,
+    REMINDER_CANCEL,
+    REMINDER_CREATE,
+    REMINDER_LIST,
+    REMINDER_PAUSE,
+    REMINDER_RESUME,
     TOOL_CATALOG,
+    WEB_FETCH,
 )
 from .gateway import ToolGateway
 from .models import (
@@ -30,11 +38,19 @@ __all__ = [
     "GROUP_KICK_MEMBER",
     "GROUP_MUTE_MEMBER",
     "GROUP_UNMUTE_MEMBER",
+    "FILE_READ",
     "MESSAGE_SEND",
+    "REMINDER_CANCEL",
+    "REMINDER_CREATE",
+    "REMINDER_LIST",
+    "REMINDER_PAUSE",
+    "REMINDER_RESUME",
+    "WEB_FETCH",
     "RegisteredTool",
     "ToolContext",
     "ToolDefinition",
     "ToolGateway",
+    "GuardrailManager",
     "ToolHandler",
     "ToolRegistrationError",
     "ToolRegistry",

@@ -3,16 +3,31 @@
 from __future__ import annotations
 
 import inspect
+import ipaddress
+import socket
 from collections.abc import Awaitable, Mapping
+from pathlib import Path
 from typing import Protocol
+from urllib.parse import urlparse
+from urllib.request import Request, urlopen
 
 from ...domain.identity import normalize_id
+from ..guardrails import GuardrailManager
+from ..jobs import Job, JobScheduler
+from ..release import RuntimeMetrics
 from .catalog import (
+    FILE_READ,
     GROUP_GET_MEMBERS,
     GROUP_KICK_MEMBER,
     GROUP_MUTE_MEMBER,
     GROUP_UNMUTE_MEMBER,
     MESSAGE_SEND,
+    REMINDER_CANCEL,
+    REMINDER_CREATE,
+    REMINDER_LIST,
+    REMINDER_PAUSE,
+    REMINDER_RESUME,
+    WEB_FETCH,
 )
 from .gateway import ToolGateway
 from .models import ToolContext, ToolResult
@@ -63,15 +78,34 @@ class OneBotToolRuntime:
         client: OneBotActionClient,
         *,
         dry_run: bool = True,
+        guardrails: GuardrailManager | None = None,
+        scheduler: JobScheduler | None = None,
+        file_root: str | Path | None = None,
+        protect_target_roles: bool = False,
+        metrics: RuntimeMetrics | None = None,
     ) -> OneBotToolRuntime:
         registry = ToolRegistry()
-        handlers = _OneBotHandlers(client, dry_run=dry_run)
+        handlers = _OneBotHandlers(
+            client,
+            dry_run=dry_run,
+            scheduler=scheduler,
+            file_root=file_root,
+            protect_target_roles=protect_target_roles,
+        )
         registry.register(GROUP_GET_MEMBERS, handlers.get_members)
         registry.register(GROUP_KICK_MEMBER, handlers.kick_member)
         registry.register(GROUP_MUTE_MEMBER, handlers.mute_member)
         registry.register(GROUP_UNMUTE_MEMBER, handlers.unmute_member)
         registry.register(MESSAGE_SEND, handlers.send_message)
-        return cls(ToolGateway(registry))
+        if scheduler is not None:
+            registry.register(REMINDER_CREATE, handlers.create_reminder)
+            registry.register(REMINDER_LIST, handlers.list_reminders)
+            registry.register(REMINDER_CANCEL, handlers.cancel_reminder)
+            registry.register(REMINDER_PAUSE, handlers.pause_reminder)
+            registry.register(REMINDER_RESUME, handlers.resume_reminder)
+        registry.register(FILE_READ, handlers.read_file)
+        registry.register(WEB_FETCH, handlers.fetch_web)
+        return cls(ToolGateway(registry, guardrails=guardrails, metrics=metrics))
 
     @classmethod
     def from_event(
@@ -79,11 +113,24 @@ class OneBotToolRuntime:
         event: object,
         *,
         dry_run: bool = True,
+        guardrails: GuardrailManager | None = None,
+        scheduler: JobScheduler | None = None,
+        file_root: str | Path | None = None,
+        protect_target_roles: bool = False,
+        metrics: RuntimeMetrics | None = None,
     ) -> OneBotToolRuntime | None:
         client = resolve_event_action_client(event)
         if client is None:
             return None
-        return cls.from_client(client, dry_run=dry_run)
+        return cls.from_client(
+            client,
+            dry_run=dry_run,
+            guardrails=guardrails,
+            scheduler=scheduler,
+            file_root=file_root,
+            protect_target_roles=protect_target_roles,
+            metrics=metrics,
+        )
 
     async def execute(
         self,
@@ -93,13 +140,31 @@ class OneBotToolRuntime:
     ) -> ToolResult:
         return await self._gateway.execute(tool_name, arguments, context)
 
+    async def confirm(
+        self,
+        confirmation_id: str,
+        context: ToolContext,
+    ) -> ToolResult:
+        return await self._gateway.confirm(confirmation_id, context)
+
 
 class _OneBotHandlers:
     """Concrete handlers kept private so callers use the gateway only."""
 
-    def __init__(self, client: OneBotActionClient, *, dry_run: bool) -> None:
+    def __init__(
+        self,
+        client: OneBotActionClient,
+        *,
+        dry_run: bool,
+        scheduler: JobScheduler | None,
+        file_root: str | Path | None,
+        protect_target_roles: bool,
+    ) -> None:
         self._client = client
         self._dry_run = dry_run
+        self._scheduler = scheduler
+        self._file_root = Path(file_root or "data/yebot_files").resolve()
+        self._protect_target_roles = protect_target_roles
 
     async def get_members(
         self,
@@ -126,6 +191,7 @@ class _OneBotHandlers:
     ) -> object:
         group_id = _numeric_id(context.target_group_id, "group_id")
         user_id = _numeric_id(arguments["user_id"], "user_id")
+        await self._check_target_role(context, group_id, user_id)
         params: dict[str, object] = {"group_id": group_id, "user_id": user_id}
         return await self._mutating_action("set_group_kick", params)
 
@@ -144,6 +210,7 @@ class _OneBotHandlers:
             "user_id": user_id,
             "duration": duration,
         }
+        await self._check_target_role(context, group_id, user_id)
         return await self._mutating_action("set_group_ban", params)
 
     async def unmute_member(
@@ -158,6 +225,7 @@ class _OneBotHandlers:
             "user_id": user_id,
             "duration": 0,
         }
+        await self._check_target_role(context, group_id, user_id)
         return await self._mutating_action("set_group_ban", params)
 
     async def send_message(
@@ -172,6 +240,126 @@ class _OneBotHandlers:
         params: dict[str, object] = {"group_id": group_id, "message": message}
         return await self._mutating_action("send_group_msg", params)
 
+    async def create_reminder(
+        self,
+        context: ToolContext,
+        arguments: Mapping[str, object],
+    ) -> object:
+        if self._scheduler is None:
+            raise RuntimeError("job scheduler unavailable")
+        delay = arguments["delay_seconds"]
+        message = arguments["message"]
+        if not isinstance(delay, int) or isinstance(delay, bool):
+            raise ValueError("delay_seconds must be an integer")
+        if not isinstance(message, str):
+            raise ValueError("message must be a string")
+        return _serialize_job(
+            self._scheduler.create_reminder(
+                context.identity,
+                delay_seconds=delay,
+                message=message,
+            )
+        )
+
+    async def list_reminders(
+        self,
+        context: ToolContext,
+        arguments: Mapping[str, object],
+    ) -> object:
+        del arguments
+        if self._scheduler is None:
+            raise RuntimeError("job scheduler unavailable")
+        return {
+            "jobs": [
+                _serialize_job(job)
+                for job in self._scheduler.list_for(context.identity)
+            ]
+        }
+
+    async def cancel_reminder(
+        self,
+        context: ToolContext,
+        arguments: Mapping[str, object],
+    ) -> object:
+        if self._scheduler is None:
+            raise RuntimeError("job scheduler unavailable")
+        return _serialize_job(
+            self._scheduler.cancel(context.identity, str(arguments["job_id"]))
+        )
+
+    async def pause_reminder(
+        self,
+        context: ToolContext,
+        arguments: Mapping[str, object],
+    ) -> object:
+        if self._scheduler is None:
+            raise RuntimeError("job scheduler unavailable")
+        return _serialize_job(
+            self._scheduler.pause(context.identity, str(arguments["job_id"]))
+        )
+
+    async def resume_reminder(
+        self,
+        context: ToolContext,
+        arguments: Mapping[str, object],
+    ) -> object:
+        if self._scheduler is None:
+            raise RuntimeError("job scheduler unavailable")
+        return _serialize_job(
+            self._scheduler.resume(context.identity, str(arguments["job_id"]))
+        )
+
+    async def read_file(
+        self,
+        context: ToolContext,
+        arguments: Mapping[str, object],
+    ) -> object:
+        del context
+        relative = arguments["path"]
+        if not isinstance(relative, str):
+            raise ValueError("path must be a string")
+        limit = arguments.get("max_bytes", 20_000)
+        if not isinstance(limit, int) or isinstance(limit, bool):
+            raise ValueError("max_bytes must be an integer")
+        path = (self._file_root / relative).resolve()
+        try:
+            path.relative_to(self._file_root)
+        except ValueError as error:
+            raise PermissionError("file path is outside configured root") from error
+        if not path.is_file():
+            raise FileNotFoundError("file not found")
+        data = path.read_bytes()[:limit]
+        return {
+            "path": str(path.relative_to(self._file_root)),
+            "truncated": path.stat().st_size > limit,
+            "text": data.decode("utf-8", errors="replace"),
+        }
+
+    async def fetch_web(
+        self,
+        context: ToolContext,
+        arguments: Mapping[str, object],
+    ) -> object:
+        del context
+        url = arguments["url"]
+        if not isinstance(url, str):
+            raise ValueError("url must be a string")
+        limit = arguments.get("max_bytes", 20_000)
+        if not isinstance(limit, int) or isinstance(limit, bool):
+            raise ValueError("max_bytes must be an integer")
+        _validate_public_url(url)
+        request = Request(url, headers={"User-Agent": "YeBot/0.1"})
+        with urlopen(request, timeout=10) as response:
+            data = response.read(limit)
+            content_type = response.headers.get("Content-Type", "")[:128]
+            final_url = response.geturl()[:2048]
+        return {
+            "url": final_url,
+            "content_type": content_type,
+            "truncated": len(data) >= limit,
+            "text": data.decode("utf-8", errors="replace"),
+        }
+
     async def _mutating_action(
         self,
         action: str,
@@ -181,6 +369,25 @@ class _OneBotHandlers:
             return {"dry_run": True, "action": action, "params": params}
         response = await self._client.call_action(action, **params)
         return {"dry_run": False, "action": action, "result": _safe_result(response)}
+
+    async def _check_target_role(
+        self,
+        context: ToolContext,
+        group_id: int,
+        user_id: int,
+    ) -> None:
+        if not self._protect_target_roles or self._dry_run:
+            return
+        response = await self._client.call_action(
+            "get_group_member_info",
+            group_id=group_id,
+            user_id=user_id,
+        )
+        role = _member_role(response)
+        if role == "owner" or (
+            role == "admin" and context.identity.role.value != "owner"
+        ):
+            raise PermissionError("target member role is protected")
 
 
 def _numeric_id(value: object, name: str) -> int:
@@ -198,6 +405,16 @@ def _extract_member_list(response: object) -> list[Mapping[str, object]]:
     if not isinstance(candidate, list):
         raise ValueError("OneBot returned no member list")
     return [item for item in candidate if isinstance(item, Mapping)]
+
+
+def _member_role(response: object) -> str:
+    candidate: object = response
+    if isinstance(response, Mapping) and isinstance(response.get("data"), Mapping):
+        candidate = response["data"]
+    if not isinstance(candidate, Mapping):
+        return ""
+    role = candidate.get("role")
+    return role.strip().lower() if isinstance(role, str) else ""
 
 
 def _sanitize_member(member: Mapping[str, object]) -> dict[str, str]:
@@ -228,6 +445,44 @@ def _safe_result(value: object) -> object:
     if isinstance(value, list):
         return [_safe_scalar(item) for item in value if _is_scalar(item)]
     return _safe_scalar(value)
+
+
+def _serialize_job(job: Job) -> dict[str, object]:
+    return {
+        "job_id": job.job_id,
+        "kind": job.kind.value,
+        "status": job.status.value,
+        "group_id": job.group_id,
+        "run_at": job.run_at.isoformat(),
+        "attempts": job.attempts,
+        "last_error": job.last_error,
+    }
+
+
+def _validate_public_url(value: str) -> None:
+    parsed = urlparse(value.strip())
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("only public HTTP(S) URLs are supported")
+    host = parsed.hostname.strip().lower()
+    if host in {"localhost", "localhost.localdomain"}:
+        raise ValueError("local hosts are not allowed")
+    try:
+        addresses = {
+            info[4][0]
+            for info in socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
+        }
+    except OSError as error:
+        raise ValueError("URL host cannot be resolved") from error
+    for address in addresses:
+        parsed_address = ipaddress.ip_address(address)
+        if (
+            parsed_address.is_private
+            or parsed_address.is_loopback
+            or parsed_address.is_link_local
+            or parsed_address.is_reserved
+            or parsed_address.is_unspecified
+        ):
+            raise ValueError("private or local URL hosts are not allowed")
 
 
 def _is_scalar(value: object) -> bool:

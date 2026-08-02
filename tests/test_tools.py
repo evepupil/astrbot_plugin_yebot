@@ -5,6 +5,7 @@ import pytest
 
 from yebot.domain.identity import Identity, UserRole
 from yebot.domain.permissions import CapabilityPolicy, PermissionScope
+from yebot.runtime.guardrails import GuardrailManager
 from yebot.runtime.tools import (
     GROUP_KICK_MEMBER,
     GROUP_MUTE_MEMBER,
@@ -256,3 +257,52 @@ def test_group_actions_have_individual_tool_permissions() -> None:
     assert GROUP_KICK_MEMBER.permission == "group.member.kick"
     assert GROUP_MUTE_MEMBER.name == "group.mute_member"
     assert GROUP_MUTE_MEMBER.permission == "group.member.mute"
+
+
+def test_gateway_requires_and_consumes_kick_confirmation() -> None:
+    manager = GuardrailManager(token_factory=lambda: "confirm-tool")
+    registry = ToolRegistry()
+    calls: list[dict[str, object]] = []
+
+    async def handler(
+        request_context: ToolContext,
+        arguments: Mapping[str, object],
+    ) -> object:
+        calls.append(dict(arguments))
+        return "kicked"
+
+    registry.register(GROUP_KICK_MEMBER, handler)
+    gateway = ToolGateway(registry, guardrails=manager)
+
+    requested = asyncio.run(
+        gateway.execute(
+            "group.kick_member",
+            {"user_id": "99"},
+            context(UserRole.GROUP_ADMIN),
+        )
+    )
+    assert requested.code is ToolResultCode.CONFIRMATION_REQUIRED
+    assert requested.value == {
+        "confirmation_id": "confirm-tool",
+        "tool": "group.kick_member",
+        "expires_at": requested.value["expires_at"],
+        "target_user_id": "99",
+    }
+    assert calls == []
+
+    confirmed = asyncio.run(
+        gateway.confirm(
+            "confirm-tool",
+            context(UserRole.GROUP_ADMIN),
+        )
+    )
+    assert confirmed.code is ToolResultCode.SUCCESS
+    assert calls == [{"user_id": "99"}]
+
+    replayed = asyncio.run(
+        gateway.confirm(
+            "confirm-tool",
+            context(UserRole.GROUP_ADMIN),
+        )
+    )
+    assert replayed.code is ToolResultCode.CONFIRMATION_REPLAYED

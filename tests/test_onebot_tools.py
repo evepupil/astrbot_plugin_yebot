@@ -1,5 +1,6 @@
 import asyncio
 from collections.abc import Mapping
+from pathlib import Path
 from types import SimpleNamespace
 
 from yebot.domain.identity import Identity, UserRole
@@ -7,6 +8,7 @@ from yebot.runtime.tools import ToolContext, ToolResultCode
 from yebot.runtime.tools.onebot import (
     OneBotActionClient,
     OneBotToolRuntime,
+    _validate_public_url,
     resolve_event_action_client,
 )
 
@@ -152,3 +154,64 @@ def test_event_action_client_uses_event_bot_api() -> None:
     assert resolved is not None
     assert asyncio.run(resolved.call_action("ping")) == {"status": "ok"}
     assert client.calls == [("ping", {})]
+
+
+def test_owner_can_read_only_file_below_configured_root(tmp_path: Path) -> None:
+    root = tmp_path / "files"
+    root.mkdir()
+    (root / "note.txt").write_text("hello", encoding="utf-8")
+    client = FakeActionClient({})
+    runtime_instance = OneBotToolRuntime.from_client(
+        OneBotActionClient(client.call_action),
+        file_root=root,
+    )
+
+    result = asyncio.run(
+        runtime_instance.execute(
+            "file.read",
+            {"path": "note.txt"},
+            tool_context(UserRole.OWNER),
+        )
+    )
+
+    assert result.code is ToolResultCode.SUCCESS
+    assert result.value == {
+        "path": "note.txt",
+        "truncated": False,
+        "text": "hello",
+    }
+
+
+def test_web_fetch_rejects_local_targets() -> None:
+    for value in ("file:///etc/passwd", "http://localhost:8080", "http://127.0.0.1"):
+        try:
+            _validate_public_url(value)
+        except ValueError:
+            continue
+        raise AssertionError(f"local URL was accepted: {value}")
+
+
+def test_live_group_admin_cannot_mute_another_admin() -> None:
+    client = FakeActionClient(
+        {
+            "get_group_member_info": {"data": {"role": "admin"}},
+            "set_group_ban": {"status": "ok"},
+        }
+    )
+    runtime_instance = OneBotToolRuntime.from_client(
+        OneBotActionClient(client.call_action),
+        dry_run=False,
+        protect_target_roles=True,
+    )
+
+    result = asyncio.run(
+        runtime_instance.execute(
+            "group.mute_member",
+            {"user_id": "99", "duration_seconds": 60},
+            tool_context(UserRole.GROUP_ADMIN),
+        )
+    )
+
+    assert result.code is ToolResultCode.EXECUTION_ERROR
+    assert result.error == "PermissionError"
+    assert client.calls == [("get_group_member_info", {"group_id": 100, "user_id": 99})]

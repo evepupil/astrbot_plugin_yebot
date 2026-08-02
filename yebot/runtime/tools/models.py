@@ -46,6 +46,14 @@ class ToolResultCode(StrEnum):
     TIMEOUT = "timeout"
     EXECUTION_ERROR = "execution_error"
     EXECUTION_DISABLED = "execution_disabled"
+    CONFIRMATION_REQUIRED = "confirmation_required"
+    INVALID_CONFIRMATION = "invalid_confirmation"
+    CONFIRMATION_EXPIRED = "confirmation_expired"
+    CONFIRMATION_REPLAYED = "confirmation_replayed"
+    QUOTA_EXCEEDED = "quota_exceeded"
+    CONCURRENCY_LIMIT = "concurrency_limit"
+    TARGET_PROTECTED = "target_protected"
+    IDEMPOTENT_REPLAY = "idempotent_replay"
 
 
 _NAME_PATTERN = re.compile(r"[a-z0-9]+(?:[._-][a-z0-9]+)*")
@@ -125,6 +133,8 @@ class ToolContext:
     identity: Identity
     target_group_id: str | None = None
     request_id: str = ""
+    confirmation_token: str = ""
+    protected_target_ids: tuple[str, ...] = ()
 
 
 ToolHandler: TypeAlias = Callable[
@@ -144,7 +154,10 @@ class ToolResult:
 
     @property
     def ok(self) -> bool:
-        return self.code is ToolResultCode.SUCCESS
+        return self.code in {
+            ToolResultCode.SUCCESS,
+            ToolResultCode.IDEMPOTENT_REPLAY,
+        }
 
 
 def validate_parameters(

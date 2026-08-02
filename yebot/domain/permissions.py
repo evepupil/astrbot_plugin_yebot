@@ -98,6 +98,21 @@ TOOL_PERMISSION_POLICIES: Final[Mapping[str, CapabilityPolicy]] = MappingProxyTy
         "external.write": CapabilityPolicy(
             frozenset({UserRole.OWNER}), PermissionScope.GLOBAL
         ),
+        "job.reminder.create": CapabilityPolicy(
+            frozenset(UserRole), PermissionScope.CURRENT_GROUP
+        ),
+        "job.reminder.read": CapabilityPolicy(
+            frozenset(UserRole), PermissionScope.CURRENT_GROUP
+        ),
+        "job.reminder.manage": CapabilityPolicy(
+            frozenset(UserRole), PermissionScope.CURRENT_GROUP
+        ),
+        "file.read": CapabilityPolicy(
+            frozenset({UserRole.OWNER}), PermissionScope.GLOBAL
+        ),
+        "web.fetch": CapabilityPolicy(
+            frozenset({UserRole.OWNER}), PermissionScope.GLOBAL
+        ),
     }
 )
 

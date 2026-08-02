@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Mapping
+from contextlib import suppress
 from datetime import datetime
 from typing import Any
 
@@ -32,9 +34,16 @@ try:
         SubAgentResult,
         TaskStep,
     )
+    from .yebot.runtime.guardrails import GuardrailManager, GuardrailSettings
+    from .yebot.runtime.jobs import Job, JobScheduler, JsonJobStore
     from .yebot.runtime.observer import observe_event
+    from .yebot.runtime.release import AuditLogWriter, RuntimeMetrics
     from .yebot.runtime.tools import ToolContext, ToolResult, ToolResultCode
-    from .yebot.runtime.tools.onebot import OneBotToolRuntime
+    from .yebot.runtime.tools.onebot import (
+        OneBotActionClient,
+        OneBotToolRuntime,
+        resolve_event_action_client,
+    )
 except ImportError:
     from yebot.domain.identity import is_bot_mentioned, normalize_id, parse_identity
     from yebot.domain.policy import LowFrequencyPolicy, PolicyConfig
@@ -51,9 +60,16 @@ except ImportError:
         SubAgentResult,
         TaskStep,
     )
+    from yebot.runtime.guardrails import GuardrailManager, GuardrailSettings
+    from yebot.runtime.jobs import Job, JobScheduler, JsonJobStore
     from yebot.runtime.observer import observe_event
+    from yebot.runtime.release import AuditLogWriter, RuntimeMetrics
     from yebot.runtime.tools import ToolContext, ToolResult, ToolResultCode
-    from yebot.runtime.tools.onebot import OneBotToolRuntime
+    from yebot.runtime.tools.onebot import (
+        OneBotActionClient,
+        OneBotToolRuntime,
+        resolve_event_action_client,
+    )
 
 
 def _as_bool(value: object, default: bool) -> bool:
@@ -70,6 +86,10 @@ def _as_float(value: object, default: float) -> float:
         if isinstance(value, (int, float)) and not isinstance(value, bool)
         else default
     )
+
+
+def _as_text(value: object, default: str) -> str:
+    return value.strip() if isinstance(value, str) and value.strip() else default
 
 
 def _as_id_list(value: object) -> tuple[str, ...]:
@@ -103,6 +123,12 @@ YeBot 工具选择规则：
 - 用户明确要求踢人、禁言或解禁时，先确认目标 QQ 号和时长是否清楚，
   再调用对应的 YeBot 工具；信息不全就先追问。
 - 用户要求向当前群发送指定内容时，调用 yebot_message_send；普通聊天回复不要调用它。
+- 踢人工具返回 confirmation_required 时，只展示确认编号并等待用户明确确认；
+  不要在同一轮自动调用 yebot_confirm_action。
+- 用户明确确认后，调用 yebot_confirm_action；确认编号只能由原操作者在原群使用一次。
+- 用户要求稍后提醒、查看提醒或管理提醒时，使用对应的 yebot_reminder_* 工具；
+  普通回复不要创建任务。
+- 只有主人明确要求读取本地文件或网页时，才调用 yebot_file_read 或 yebot_web_fetch。
 - 需要把只读查询交给专门步骤整理时，调用 yebot_delegate；SubAgent 只能使用
   提供的白名单工具，不能发消息或管理群。
 - 工具返回权限拒绝、dry-run 或错误状态时，必须如实说明状态，不能声称动作已经完成。
@@ -130,6 +156,30 @@ class YeBot(Star):
         self._bot_id = str(values.get("bot_qq_id", "")).strip()
         self._observe_only = _as_bool(values.get("observe_only"), True)
         self._tool_dry_run = _as_bool(values.get("tool_dry_run"), True)
+        self._audit_writer = AuditLogWriter(
+            _as_text(values.get("audit_log_path"), "data/yebot_audit.jsonl")
+        )
+        self._metrics = RuntimeMetrics()
+        self._guardrails = GuardrailManager(
+            GuardrailSettings(
+                confirmation_ttl_seconds=_as_int(
+                    values.get("confirmation_ttl_seconds"), 120
+                ),
+                daily_action_limit=_as_int(values.get("daily_action_limit"), 100),
+                daily_kick_limit=_as_int(values.get("daily_kick_limit"), 20),
+                max_concurrent_actions=_as_int(values.get("max_concurrent_actions"), 2),
+            ),
+            protected_target_ids=tuple((*self._owner_ids, self._bot_id)),
+            audit_sink=self._audit_writer.append,
+        )
+        self._job_scheduler = JobScheduler(
+            JsonJobStore(
+                _as_text(values.get("job_store_path"), "data/yebot_jobs.json")
+            ),
+            metrics=self._metrics,
+        )
+        self._file_root = _as_text(values.get("file_root"), "data/yebot_files")
+        self._job_task: asyncio.Task[None] | None = None
         self._agent_budget = AgentBudget(
             max_steps=_as_int(values.get("agent_max_steps"), 6),
             max_concurrency=_as_int(values.get("agent_max_concurrency"), 1),
@@ -162,6 +212,7 @@ class YeBot(Star):
         *,
         request_id: str = "",
         target_group_id: str | None = None,
+        confirmation_token: str = "",
     ) -> ToolResult:
         """Execute a registered tool for a platform event.
 
@@ -185,7 +236,16 @@ class YeBot(Star):
                 error="observe-only mode",
             )
 
-        runtime = OneBotToolRuntime.from_event(event, dry_run=self._tool_dry_run)
+        await self._ensure_job_worker(event)
+        runtime = OneBotToolRuntime.from_event(
+            event,
+            dry_run=self._tool_dry_run,
+            guardrails=self._guardrails,
+            scheduler=self._job_scheduler,
+            file_root=self._file_root,
+            protect_target_roles=True,
+            metrics=self._metrics,
+        )
         if runtime is None:
             return ToolResult(
                 normalized_name,
@@ -200,8 +260,93 @@ class YeBot(Star):
             or normalize_id(raw_event.get("group_id"))
             or None,
             request_id=request_id,
+            confirmation_token=confirmation_token,
+            protected_target_ids=tuple((*self._owner_ids, self._bot_id)),
         )
         return await runtime.execute(normalized_name, arguments, context)
+
+    async def confirm_tool(
+        self,
+        event: AstrMessageEvent,
+        confirmation_id: str,
+        *,
+        request_id: str = "",
+    ) -> ToolResult:
+        """Execute a pending high-risk action for the current actor and group."""
+
+        raw_event = getattr(event.message_obj, "raw_message", None)
+        if not isinstance(raw_event, Mapping):
+            return ToolResult(
+                "confirmation",
+                ToolResultCode.EXECUTION_ERROR,
+                error="event unavailable",
+            )
+        if self._observe_only:
+            return ToolResult(
+                "confirmation",
+                ToolResultCode.EXECUTION_DISABLED,
+                error="observe-only mode",
+            )
+        await self._ensure_job_worker(event)
+        runtime = OneBotToolRuntime.from_event(
+            event,
+            dry_run=self._tool_dry_run,
+            guardrails=self._guardrails,
+            scheduler=self._job_scheduler,
+            file_root=self._file_root,
+            protect_target_roles=True,
+            metrics=self._metrics,
+        )
+        if runtime is None:
+            return ToolResult(
+                "confirmation",
+                ToolResultCode.EXECUTION_ERROR,
+                error="action client unavailable",
+            )
+        identity = parse_identity(raw_event, self._owner_ids)
+        context = ToolContext(
+            identity=identity,
+            target_group_id=normalize_id(raw_event.get("group_id")) or None,
+            request_id=request_id or _request_id(event),
+            protected_target_ids=tuple((*self._owner_ids, self._bot_id)),
+        )
+        return await runtime.confirm(confirmation_id, context)
+
+    async def _ensure_job_worker(self, event: AstrMessageEvent) -> None:
+        if self._job_task is not None and not self._job_task.done():
+            return
+        client = resolve_event_action_client(event)
+        if client is None:
+            return
+        self._job_task = asyncio.create_task(self._job_loop(client))
+
+    async def _job_loop(self, client: OneBotActionClient) -> None:
+        async def execute(job: Job) -> None:
+            if self._tool_dry_run:
+                raise RuntimeError("dry_run_enabled")
+            message = job.payload.get("message")
+            if not isinstance(message, str) or not message.strip():
+                raise ValueError("reminder_message_missing")
+            group_id = normalize_id(job.group_id)
+            if not group_id.isdecimal():
+                raise ValueError("reminder_group_id_invalid")
+            await client.call_action(
+                "send_group_msg",
+                group_id=int(group_id),
+                message=message,
+            )
+
+        while True:
+            await self._job_scheduler.run_due(execute)
+            await asyncio.sleep(1)
+
+    async def terminate(self) -> None:
+        if self._job_task is None:
+            return
+        self._job_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await self._job_task
+        self._job_task = None
 
     @filter.on_llm_request()
     async def guide_agent_tool_selection(
@@ -279,6 +424,9 @@ class YeBot(Star):
                 "group.mute_member": "yebot_group_mute_member",
                 "group.unmute_member": "yebot_group_unmute_member",
                 "message.send": "yebot_message_send",
+                "reminder.list": "yebot_reminder_list",
+                "file.read": "yebot_file_read",
+                "web.fetch": "yebot_web_fetch",
             }
             for tool_name in request.allowed_tools:
                 exposed_name = exposed_names.get(tool_name)
@@ -406,6 +554,122 @@ class YeBot(Star):
             {"message": message},
         )
         return self._encode_run(result)
+
+    @filter.llm_tool(name="yebot_confirm_action")
+    async def llm_confirm_action(
+        self,
+        event: AstrMessageEvent,
+        confirmation_id: str,
+    ) -> str:
+        """确认当前群中由同一操作者发起的待执行高风险动作。"""
+
+        result = await self.confirm_tool(event, confirmation_id)
+        return json.dumps(
+            {
+                "status": result.code.value,
+                "result": result.value,
+                "error": result.error,
+            },
+            ensure_ascii=False,
+            default=str,
+        )
+
+    @filter.llm_tool(name="yebot_reminder_create")
+    async def llm_reminder_create(
+        self,
+        event: AstrMessageEvent,
+        delay_seconds: float,
+        message: str,
+    ) -> str:
+        """在当前群创建一条延时提醒。"""
+
+        delay: object = delay_seconds
+        if isinstance(delay_seconds, float) and delay_seconds.is_integer():
+            delay = int(delay_seconds)
+        result = await self._run_single_tool(
+            event,
+            "reminder.create",
+            {"delay_seconds": delay, "message": message},
+        )
+        return self._encode_run(result)
+
+    @filter.llm_tool(name="yebot_reminder_list")
+    async def llm_reminder_list(self, event: AstrMessageEvent) -> str:
+        """列出当前群中当前操作者可见的提醒任务。"""
+
+        return self._encode_run(await self._run_single_tool(event, "reminder.list", {}))
+
+    @filter.llm_tool(name="yebot_reminder_cancel")
+    async def llm_reminder_cancel(
+        self,
+        event: AstrMessageEvent,
+        job_id: str,
+    ) -> str:
+        """取消一条提醒任务。"""
+
+        return self._encode_run(
+            await self._run_single_tool(event, "reminder.cancel", {"job_id": job_id})
+        )
+
+    @filter.llm_tool(name="yebot_reminder_pause")
+    async def llm_reminder_pause(
+        self,
+        event: AstrMessageEvent,
+        job_id: str,
+    ) -> str:
+        """暂停一条提醒任务。"""
+
+        return self._encode_run(
+            await self._run_single_tool(event, "reminder.pause", {"job_id": job_id})
+        )
+
+    @filter.llm_tool(name="yebot_reminder_resume")
+    async def llm_reminder_resume(
+        self,
+        event: AstrMessageEvent,
+        job_id: str,
+    ) -> str:
+        """恢复一条已暂停的提醒任务。"""
+
+        return self._encode_run(
+            await self._run_single_tool(event, "reminder.resume", {"job_id": job_id})
+        )
+
+    @filter.llm_tool(name="yebot_file_read")
+    async def llm_file_read(
+        self,
+        event: AstrMessageEvent,
+        path: str,
+        max_bytes: float = 20000,
+    ) -> str:
+        """读取配置根目录下的受限文本文件。"""
+
+        limit: object = max_bytes
+        if isinstance(max_bytes, float) and max_bytes.is_integer():
+            limit = int(max_bytes)
+        return self._encode_run(
+            await self._run_single_tool(
+                event, "file.read", {"path": path, "max_bytes": limit}
+            )
+        )
+
+    @filter.llm_tool(name="yebot_web_fetch")
+    async def llm_web_fetch(
+        self,
+        event: AstrMessageEvent,
+        url: str,
+        max_bytes: float = 20000,
+    ) -> str:
+        """读取公开网页的受限文本内容。"""
+
+        limit: object = max_bytes
+        if isinstance(max_bytes, float) and max_bytes.is_integer():
+            limit = int(max_bytes)
+        return self._encode_run(
+            await self._run_single_tool(
+                event, "web.fetch", {"url": url, "max_bytes": limit}
+            )
+        )
 
     @filter.llm_tool(name="yebot_delegate")
     async def llm_delegate(

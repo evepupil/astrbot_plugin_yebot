@@ -239,6 +239,7 @@ class YeBot(Star):
         self._sticker_agent_semaphore = asyncio.Semaphore(
             max(1, _as_int(values.get("sticker_agent_max_concurrency"), 1))
         )
+        self._sticker_send_semaphore = asyncio.Semaphore(1)
         self._memory_auto_recall = _as_bool(values.get("memory_auto_recall"), True)
         self._memory_service = MemoryService(
             SQLiteMemoryStore(
@@ -516,30 +517,47 @@ class YeBot(Star):
                 completion[:200],
             )
 
-    async def _auto_send_sticker(
-        self,
-        event: AstrMessageEvent,
-        decision_scope: str,
-    ) -> None:
-        async with self._sticker_agent_semaphore:
-            completion = await self._run_restricted_sticker_agent(
-                event,
-                prompt=(
-                    "Read the current group conversation and decide whether a saved "
-                    "sticker would add a genuinely funny or useful reaction. If so, "
-                    "search the current group's sticker library by meaning, then "
-                    "send at most one suitable result. If no sticker fits, do nothing. "
-                    "Do not send text and do not invent sticker IDs."
+    async def _auto_send_sticker(self, event: AstrMessageEvent) -> None:
+        async with self._sticker_send_semaphore:
+            raw_event = getattr(event.message_obj, "raw_message", None)
+            if not isinstance(raw_event, Mapping):
+                return
+            identity = parse_identity(raw_event, self._owner_ids)
+            send_decision = self._sticker_send_policy.evaluate(
+                identity,
+                datetime.now().astimezone(),
+                mentioned=is_bot_mentioned(
+                    raw_event, event.get_self_id() or self._bot_id
                 ),
-                allowed_tools=("yebot_sticker_search", "yebot_sticker_send"),
-                mode="sticker_send",
             )
             logger.debug(
-                "YeBot automatic sticker send finished group=%s message=%s result=%s",
-                decision_scope,
-                _request_id(event),
-                completion[:200],
+                "YeBot sticker send policy group=%s decision=%s",
+                identity.group_id,
+                send_decision.code,
             )
+            if not send_decision.should_reply:
+                return
+            async with self._sticker_agent_semaphore:
+                completion = await self._run_restricted_sticker_agent(
+                    event,
+                    prompt=(
+                        "Read the current group conversation and decide whether a "
+                        "saved sticker would add a genuinely funny or useful reaction. "
+                        "If so, search the current group's sticker library by meaning, "
+                        "then send at most one suitable result. If no sticker fits, "
+                        "do nothing. "
+                        "Do not send text and do not invent sticker IDs."
+                    ),
+                    allowed_tools=("yebot_sticker_search", "yebot_sticker_send"),
+                    mode="sticker_send",
+                )
+                logger.debug(
+                    "YeBot automatic sticker send finished "
+                    "group=%s message=%s result=%s",
+                    identity.group_id,
+                    _request_id(event),
+                    completion[:200],
+                )
 
     async def terminate(self) -> None:
         tasks = list(self._background_tasks)
@@ -1167,20 +1185,4 @@ class YeBot(Star):
             self._track_background(self._auto_collect_sticker(event))
 
         if self._sticker_auto_send:
-            send_decision = self._sticker_send_policy.evaluate(
-                observation.identity,
-                datetime.now().astimezone(),
-                mentioned=observation.mentioned,
-            )
-            logger.debug(
-                "YeBot sticker send policy group=%s decision=%s",
-                observation.identity.group_id,
-                send_decision.code,
-            )
-            if send_decision.should_reply:
-                self._track_background(
-                    self._auto_send_sticker(
-                        event,
-                        observation.identity.group_id,
-                    )
-                )
+            self._track_background(self._auto_send_sticker(event))

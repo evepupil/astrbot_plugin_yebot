@@ -103,9 +103,7 @@ class AuditEvent:
     outcome: str
     request_id: str = ""
     target_user_id: str = ""
-    details: Mapping[str, str] = field(
-        default_factory=lambda: MappingProxyType({})
-    )
+    details: Mapping[str, str] = field(default_factory=lambda: MappingProxyType({}))
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "event_id", self.event_id.strip())

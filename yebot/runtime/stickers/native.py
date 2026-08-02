@@ -84,9 +84,7 @@ class NativeStickerClient:
 
     async def list_details(self, *, count: int = 48) -> tuple[NativeSticker, ...]:
         response = await self._call("fetch_custom_face_detail", count=count)
-        _LOGGER.info(
-            "native sticker detail response=%s", _compact_response(response)
-        )
+        _LOGGER.info("native sticker detail response=%s", _compact_response(response))
         return parse_native_stickers(response)
 
     async def _find_detail(self, md5: str) -> NativeSticker | None:

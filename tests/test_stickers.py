@@ -371,6 +371,4 @@ def test_personal_native_face_is_persisted_and_sent_by_qq_url(tmp_path: Path) ->
     assert sent.code is ToolResultCode.SUCCESS
     assert sent.value["format"] == "image_fallback"
     send_call = next(call for call in client.calls if call[0] == "send_group_msg")
-    assert send_call[1]["message"][0]["data"]["file"].startswith(
-        "https://p.qpic.cn/"
-    )
+    assert send_call[1]["message"][0]["data"]["file"].startswith("https://p.qpic.cn/")

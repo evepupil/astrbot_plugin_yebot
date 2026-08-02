@@ -250,5 +250,51 @@
     "title": "记忆数据库路径",
     "description": "SQLite 记忆数据库路径；使用相对路径时相对于 AstrBot 工作目录。",
     "default": "data/yebot_memory.db"
+  },
+  "image_generation_enabled": {
+    "type": "bool",
+    "title": "启用生图",
+    "description": "识别到明确的画图请求后调用 GPT2IMAGE；这是用户主动请求，不受普通低频回复概率影响。",
+    "default": true
+  },
+  "image_api_base_url": {
+    "type": "string",
+    "title": "生图 API 地址",
+    "description": "OpenAI 兼容生图 API 根地址。",
+    "default": "https://gpt2image.superapi.buzz"
+  },
+  "image_api_key": {
+    "type": "string",
+    "title": "生图 API Key",
+    "description": "留空时读取 GPT2IMAGE_API_KEY 环境变量；不要把密钥提交到 Git。",
+    "default": ""
+  },
+  "image_model": {
+    "type": "string",
+    "title": "生图模型",
+    "description": "发送给 API 的图片模型 ID。",
+    "default": "gpt-image-2"
+  },
+  "image_request_timeout_seconds": {
+    "type": "float",
+    "title": "生图请求超时秒数",
+    "description": "单次远程生图请求的最长等待时间。",
+    "default": 180,
+    "minimum": 1,
+    "maximum": 1200
+  },
+  "image_daily_limit": {
+    "type": "int",
+    "title": "普通用户每日生图次数",
+    "description": "每个 QQ 号每天可用的生图次数；主人不受此限制。",
+    "default": 3,
+    "minimum": 0,
+    "maximum": 100
+  },
+  "image_quota_store_path": {
+    "type": "string",
+    "title": "生图次数存储路径",
+    "description": "按用户和日期保存生图次数的本地 JSON 路径。",
+    "default": "data/yebot_image_quota.json"
   }
 }

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import os
 from collections.abc import Coroutine, Mapping
 from contextlib import suppress
 from contextvars import ContextVar
@@ -12,7 +13,8 @@ from datetime import datetime
 from typing import Any
 
 from astrbot.api import logger
-from astrbot.api.event import AstrMessageEvent, filter
+from astrbot.api.event import AstrMessageEvent, MessageChain, filter
+from astrbot.api.message_components import Image, Plain, Reply
 from astrbot.api.provider import ProviderRequest
 from astrbot.api.star import Context, Star, register
 
@@ -38,6 +40,13 @@ try:
         TaskStep,
     )
     from .yebot.runtime.guardrails import GuardrailManager, GuardrailSettings
+    from .yebot.runtime.image_generation import (
+        DailyImageQuota,
+        GeneratedImage,
+        ImageGenerationClient,
+        ImageGenerationError,
+        extract_image_prompt,
+    )
     from .yebot.runtime.jobs import Job, JobScheduler, JsonJobStore
     from .yebot.runtime.memory import (
         MemoryService,
@@ -81,6 +90,13 @@ except ImportError:
         TaskStep,
     )
     from yebot.runtime.guardrails import GuardrailManager, GuardrailSettings
+    from yebot.runtime.image_generation import (
+        DailyImageQuota,
+        GeneratedImage,
+        ImageGenerationClient,
+        ImageGenerationError,
+        extract_image_prompt,
+    )
     from yebot.runtime.jobs import Job, JobScheduler, JsonJobStore
     from yebot.runtime.memory import (
         MemoryService,
@@ -132,7 +148,9 @@ def _as_id_list(value: object) -> tuple[str, ...]:
 
 def _message_text(event: AstrMessageEvent) -> str:
     message_obj = getattr(event, "message_obj", None)
-    message_str = getattr(message_obj, "message_str", "")
+    message_str = getattr(message_obj, "message_str", "") or getattr(
+        event, "message_str", ""
+    )
     current = str(message_str).strip()[:4000]
     get_extra = getattr(event, "get_extra", None)
     reply_context = get_extra("yebot.reply_context", "") if callable(get_extra) else ""
@@ -299,6 +317,31 @@ class YeBot(Star):
                 ),
                 require_mention=False,
             )
+        )
+        self._image_generation_enabled = _as_bool(
+            values.get("image_generation_enabled"), True
+        )
+        configured_image_key = _as_text(values.get("image_api_key"), "")
+        image_api_key = (
+            configured_image_key or os.getenv("GPT2IMAGE_API_KEY", "").strip()
+        )
+        self._image_client = ImageGenerationClient(
+            api_key=image_api_key,
+            base_url=_as_text(
+                values.get("image_api_base_url"),
+                "https://gpt2image.superapi.buzz",
+            ),
+            model=_as_text(values.get("image_model"), "gpt-image-2"),
+            timeout_seconds=_as_float(
+                values.get("image_request_timeout_seconds"), 180.0
+            ),
+        )
+        self._image_quota = DailyImageQuota(
+            _as_text(
+                values.get("image_quota_store_path"),
+                "data/yebot_image_quota.json",
+            ),
+            limit=_as_int(values.get("image_daily_limit"), 3),
         )
 
     async def execute_tool(
@@ -636,8 +679,7 @@ class YeBot(Star):
                     "yebot_sticker_consider exactly once for each useful image, "
                     "including a concise Chinese meaning and a few search tags. "
                     "For images that are not useful, call it with should_collect "
-                    "false. Do not explain the decision to the group."
-                    + caption_hint
+                    "false. Do not explain the decision to the group." + caption_hint
                 ),
                 image_urls=image_urls,
                 allowed_tools=("yebot_sticker_consider",),
@@ -1297,6 +1339,118 @@ class YeBot(Star):
             subagent_executor=lambda request: self._run_subagent(event, request),
         )
         return self._encode_run(result)
+
+    async def _handle_image_generation_request(self, event: AstrMessageEvent) -> bool:
+        """Start one explicit image request and stop the normal LLM pipeline."""
+
+        if not self._image_generation_enabled:
+            return False
+        prompt = extract_image_prompt(_message_text(event))
+        if prompt is None:
+            return False
+
+        if not self._image_client.is_configured:
+            await self._send_image_text(event, "生图服务还没配置好")
+            self._stop_image_event(event)
+            return True
+
+        raw_event = getattr(event.message_obj, "raw_message", None)
+        if isinstance(raw_event, Mapping):
+            identity = parse_identity(raw_event, self._owner_ids)
+            user_id = identity.user_id
+        else:
+            user_id = normalize_id(event.get_sender_id())
+        decision = await self._image_quota.reserve(
+            user_id,
+            is_owner=user_id in self._owner_ids,
+        )
+        if not decision.allowed:
+            await self._send_image_text(event, "没了")
+            self._stop_image_event(event)
+            return True
+
+        await self._send_image_text(event, "开始画了")
+        self._stop_image_event(event)
+        self._track_background(self._generate_image(event, prompt))
+        return True
+
+    async def _generate_image(
+        self,
+        event: AstrMessageEvent,
+        prompt: str,
+    ) -> None:
+        try:
+            image = await self._image_client.generate(prompt)
+            await self._send_generated_image(event, image)
+        except ImageGenerationError as error:
+            logger.warning(
+                "YeBot image generation failed message=%s error=%s",
+                _request_id(event),
+                str(error),
+            )
+            await self._send_image_failure(event)
+        except Exception as error:
+            logger.warning(
+                "YeBot image generation crashed message=%s error=%s",
+                _request_id(event),
+                type(error).__name__,
+            )
+            await self._send_image_failure(event)
+
+    async def _send_image_text(self, event: AstrMessageEvent, text: str) -> None:
+        await event.send(MessageChain([Plain(text)]))
+
+    async def _send_generated_image(
+        self,
+        event: AstrMessageEvent,
+        image: GeneratedImage,
+    ) -> None:
+        chain: list[Any] = []
+        reply = self._image_reply(event)
+        if reply is not None:
+            chain.append(reply)
+        if image.url:
+            chain.append(Image.fromURL(image.url))
+        else:
+            chain.append(Image.fromBase64(image.base64_data))
+        await event.send(MessageChain(chain))
+
+    async def _send_image_failure(self, event: AstrMessageEvent) -> None:
+        chain: list[Any] = []
+        reply = self._image_reply(event)
+        if reply is not None:
+            chain.append(reply)
+        chain.append(Plain("画图失败了"))
+        await event.send(MessageChain(chain))
+
+    @staticmethod
+    def _image_reply(event: AstrMessageEvent) -> Reply | None:
+        message_obj = getattr(event, "message_obj", None)
+        message_id = getattr(message_obj, "message_id", None)
+        if message_id is None or str(message_id).strip() == "":
+            return None
+        return Reply(id=message_id)
+
+    @staticmethod
+    def _stop_image_event(event: AstrMessageEvent) -> None:
+        event.should_call_llm(False)
+        event.stop_event()
+
+    @filter.platform_adapter_type(filter.PlatformAdapterType.AIOCQHTTP)
+    @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
+    async def generate_image_from_group(
+        self,
+        event: AstrMessageEvent,
+    ) -> None:
+        await self._handle_image_generation_request(event)
+
+    @filter.platform_adapter_type(filter.PlatformAdapterType.AIOCQHTTP)
+    @filter.event_message_type(filter.EventMessageType.PRIVATE_MESSAGE)
+    async def generate_image_from_private(
+        self,
+        event: AstrMessageEvent,
+    ) -> None:
+        await self._handle_image_generation_request(event)
 
     @filter.platform_adapter_type(filter.PlatformAdapterType.AIOCQHTTP)
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)

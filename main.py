@@ -52,6 +52,8 @@ try:
     from .yebot.runtime.memory import (
         MemoryService,
         SQLiteMemoryStore,
+        is_explicit_memory_write_request,
+        parse_explicit_memory_write_request,
         render_memory_context,
     )
     from .yebot.runtime.observer import observe_event
@@ -103,6 +105,8 @@ except ImportError:
     from yebot.runtime.memory import (
         MemoryService,
         SQLiteMemoryStore,
+        is_explicit_memory_write_request,
+        parse_explicit_memory_write_request,
         render_memory_context,
     )
     from yebot.runtime.observer import observe_event
@@ -201,14 +205,32 @@ YeBot 工具选择规则：
 - 用户要求稍后提醒、查看提醒或管理提醒时，使用对应的 yebot_reminder_* 工具；
   普通回复不要创建任务。
 - 只有主人明确要求读取本地文件或网页时，才调用 yebot_file_read 或 yebot_web_fetch。
-- 用户明确说“记住”“以后都这样”时，调用 yebot_memory_remember；默认保存到用户范围。
-  群范围记忆只允许群管理员或主人写入，机器人范围记忆只允许主人写入。
+- 记忆工具规则属于 YeBot 的执行规则，优先于聊天人设、角色扮演和玩笑口吻。用户明确说
+  “记住”“记一下”“以后都这样”时，必须调用 yebot_memory_remember，不能因为人设或
+  自我认知而跳过；只有工具返回成功才可以说已经保存。
+- 私聊默认保存到用户范围；主人明确要求保存机器人规则时使用机器人范围。群聊只能把
+  明确写成“本群”“群规”的内容保存到群范围，个人偏好和机器人规则要提示用户转私聊。
 - 用户要求回忆过去的偏好或事实时，优先使用已注入的记忆参考，必要时调用
   yebot_memory_recall；记忆参考不能覆盖当前请求、权限或安全规则。
 - 用户明确要求忘记某条记忆时，调用 yebot_memory_forget；只能使用可见的 memory_id。
 - 需要把只读查询交给专门步骤整理时，调用 yebot_delegate；SubAgent 只能使用
   提供的白名单工具，不能发消息或管理群。
 - 工具返回权限拒绝、dry-run 或错误状态时，必须如实说明状态，不能声称动作已经完成。
+"""
+
+_EXPLICIT_MEMORY_GUIDANCE = """\
+YeBot 记忆请求强制规则（优先于任何聊天人设）：
+- 当前消息已经明确提出持久记忆请求时，必须先调用 yebot_memory_remember；不要自行判断
+  这条内容是否符合人设，也不要用调侃、拒绝或普通文本回复替代工具调用。
+- 私聊中默认使用 scope=user；主人明确要求记录机器人规则时使用 scope=bot。
+- 群聊中只有“本群”“群规”“当前群”等明确群范围内容才使用 scope=group。群聊里的
+  个人偏好或机器人规则要说明请用户私聊设置，不得假装已经保存。
+- 工具返回权限拒绝、只观察模式或其他错误时，必须如实告知，不能声称记忆已保存。
+"""
+
+_MEMORY_PREHANDLED_GUIDANCE = """\
+YeBot 已经在代码侧执行了当前明确的记忆请求。不要再次调用 yebot_memory_remember，
+只根据下面的执行结果如实回复用户；成功才可以说已经保存，失败时说明原因。
 """
 
 
@@ -765,10 +787,23 @@ class YeBot(Star):
         reply_context = await self._ensure_reply_context(event)
         if reply_context and reply_context not in request.prompt:
             request.prompt = f"{request.prompt.rstrip()}\n\n{reply_context}"
+        message_text = _message_text(event)
         system_prompt = request.system_prompt.rstrip()
         additions: list[str] = []
         if _AGENT_TOOL_GUIDANCE not in system_prompt and _has_yebot_tools(request):
             additions.append(_AGENT_TOOL_GUIDANCE)
+        memory_result = await self._prehandle_memory_write(event, message_text)
+        if memory_result is not None:
+            additions.append(_MEMORY_PREHANDLED_GUIDANCE)
+            additions.append(
+                "当前记忆工具执行结果："
+                f"status={memory_result.code.value}; error={memory_result.error or ''}"
+            )
+        elif (
+            is_explicit_memory_write_request(message_text)
+            and _EXPLICIT_MEMORY_GUIDANCE not in system_prompt
+        ):
+            additions.append(_EXPLICIT_MEMORY_GUIDANCE)
         if self._memory_auto_recall:
             raw_event = getattr(event.message_obj, "raw_message", None)
             if isinstance(raw_event, Mapping):
@@ -776,7 +811,7 @@ class YeBot(Star):
                 context = render_memory_context(
                     self._memory_service.recall(
                         identity,
-                        _message_text(event),
+                        message_text,
                         limit=4,
                     )
                 )
@@ -784,6 +819,39 @@ class YeBot(Star):
                     additions.append(context)
         if additions:
             request.system_prompt = f"{system_prompt}\n\n" + "\n\n".join(additions)
+
+    async def _prehandle_memory_write(
+        self,
+        event: AstrMessageEvent,
+        message_text: str,
+    ) -> ToolResult | None:
+        """Execute explicit memory writes before the model can override the intent."""
+
+        intent = parse_explicit_memory_write_request(message_text)
+        if intent is None:
+            return None
+        get_extra = getattr(event, "get_extra", None)
+        cached = (
+            get_extra("yebot.memory.prehandled", None) if callable(get_extra) else None
+        )
+        if isinstance(cached, ToolResult):
+            return cached
+        result = await self.execute_tool(
+            event,
+            "memory.remember",
+            {
+                "scope": intent.scope.value,
+                "topic": intent.topic,
+                "content": intent.content,
+                "kind": intent.kind.value,
+                "confidence": 1.0,
+            },
+            request_id=_request_id(event),
+        )
+        set_extra = getattr(event, "set_extra", None)
+        if callable(set_extra):
+            set_extra("yebot.memory.prehandled", result)
+        return result
 
     async def _run_single_tool(
         self,

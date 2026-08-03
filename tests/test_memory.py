@@ -13,8 +13,43 @@ from yebot.runtime.memory import (
     MemoryService,
     MemoryStatus,
     SQLiteMemoryStore,
+    is_explicit_memory_write_request,
+    parse_explicit_memory_write_request,
     render_memory_context,
 )
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    (
+        ("记住，我喜欢简短回答", True),
+        ("记一下，以后使用中文", True),
+        ("以后都先给结论", True),
+        ("你还记住我吗？", False),
+        ("记住了", False),
+        ("忘记我之前的偏好", False),
+        ("普通聊天", False),
+    ),
+)
+def test_explicit_memory_write_intent(text: str, expected: bool) -> None:
+    assert is_explicit_memory_write_request(text) is expected
+
+
+def test_memory_write_intent_selects_scope_and_kind() -> None:
+    private = parse_explicit_memory_write_request("记住，我喜欢简短的中文回答")
+    assert private is not None
+    assert private.scope.value == "user"
+    assert private.kind.value == "preference"
+
+    group = parse_explicit_memory_write_request("记住，本群晚上不要主动刷屏")
+    assert group is not None
+    assert group.scope.value == "group"
+    assert group.kind.value == "rule"
+
+    bot = parse_explicit_memory_write_request("记一下，我是你的主人")
+    assert bot is not None
+    assert bot.scope.value == "bot"
+    assert bot.kind.value == "rule"
 
 
 def identity(

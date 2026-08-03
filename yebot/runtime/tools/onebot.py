@@ -44,6 +44,8 @@ from .catalog import (
     REMINDER_RESUME,
     STICKER_CONSIDER,
     STICKER_SEARCH,
+    STICKER_DELETE,
+    STICKER_LIST,
     STICKER_SEND,
     WEB_FETCH,
 )
@@ -104,6 +106,7 @@ class OneBotToolRuntime:
         sticker_store: StickerStore | None = None,
         memory_service: MemoryService | None = None,
         model_ratings_client: ModelRatingsClient | None = None,
+        sticker_min_auto_collect_confidence: float = 0.9,
         event: object | None = None,
     ) -> OneBotToolRuntime:
         registry = ToolRegistry()
@@ -120,6 +123,7 @@ class OneBotToolRuntime:
                 )
                 if sticker_store
                 else None
+                    min_auto_collect_confidence=sticker_min_auto_collect_confidence,
             ),
             memory_service=memory_service,
             model_ratings_client=model_ratings_client,
@@ -154,6 +158,8 @@ class OneBotToolRuntime:
             registry.register(MEMORY_REMEMBER, handlers.remember_memory)
             registry.register(MEMORY_RECALL, handlers.recall_memory)
             registry.register(MEMORY_FORGET, handlers.forget_memory)
+            registry.register(STICKER_LIST, handlers.list_stickers)
+            registry.register(STICKER_DELETE, handlers.delete_sticker)
         if handlers.model_ratings_client is not None:
             registry.register(MODEL_RATINGS, handlers.get_model_ratings)
         return cls(ToolGateway(registry, guardrails=guardrails, metrics=metrics))
@@ -176,6 +182,7 @@ class OneBotToolRuntime:
         client = resolve_event_action_client(event)
         if client is None:
             return None
+        sticker_min_auto_collect_confidence: float = 0.9,
         return cls.from_client(
             client,
             dry_run=dry_run,
@@ -192,6 +199,7 @@ class OneBotToolRuntime:
 
     async def execute(
         self,
+            sticker_min_auto_collect_confidence=sticker_min_auto_collect_confidence,
         tool_name: str,
         arguments: Mapping[str, object] | object,
         context: ToolContext,
@@ -715,6 +723,32 @@ class _OneBotHandlers:
         return {
             "memory_id": record.memory_id,
             "scope": record.scope.value,
+    async def list_stickers(
+        self,
+        context: ToolContext,
+        arguments: Mapping[str, object],
+    ) -> object:
+        del context
+        if self.sticker_service is None:
+            raise RuntimeError("sticker service unavailable")
+        limit = arguments.get("limit", 20)
+        if not isinstance(limit, int) or isinstance(limit, bool):
+            raise ValueError("limit must be an integer")
+        return self.sticker_service.list_for_review(limit)
+
+    async def delete_sticker(
+        self,
+        context: ToolContext,
+        arguments: Mapping[str, object],
+    ) -> object:
+        del context
+        if self.sticker_service is None:
+            raise RuntimeError("sticker service unavailable")
+        sticker_id = arguments["sticker_id"]
+        if not isinstance(sticker_id, str):
+            raise ValueError("sticker_id must be a string")
+        return self.sticker_service.delete(sticker_id)
+
             "topic": record.topic,
             "status": record.status.value,
         }

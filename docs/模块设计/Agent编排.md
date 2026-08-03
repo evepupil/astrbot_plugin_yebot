@@ -58,6 +58,8 @@ AstrBot 主 Agent/function tool
 - `yebot_sticker_consider`
 - `yebot_sticker_search`
 - `yebot_sticker_send`
+- `yebot_sticker_list`
+- `yebot_sticker_delete`
 - `yebot_memory_remember`
 - `yebot_memory_recall`
 - `yebot_memory_forget`
@@ -89,3 +91,4 @@ AstrBot 主 Agent/function tool
 - 2026-08-03：主人未 @ 时，已由主 Agent 选择的工具可直达工具网关；未 @ 的其他成员工具调用明确返回失败，避免模型误报执行成功。
 - 2026-08-03：接入引用式消息撤回入口，主 Agent 只把当前唯一回复目标交给工具网关，防止模型凭上下文猜测消息 ID。
 - 2026-08-03：撤回支持自然语言自动选择，主 Agent 先读取最近消息再使用当前事件内的候选 ID；引用目标仍优先。
+- 2026-08-03：表情收录 Agent 改为提交明确类别、独立反应资格和置信度；主人可通过新增表情库查看与删除工具清理误收内容。

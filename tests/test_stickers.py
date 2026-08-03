@@ -167,6 +167,59 @@ def test_service_can_decline_without_writing(tmp_path: Path) -> None:
     assert service.store.list_for("100") == ()
 
 
+def test_service_rejects_a_plain_photo_even_when_confident(tmp_path: Path) -> None:
+    image_path = tmp_path / "cat.jpg"
+    image_path.write_bytes(b"image-data")
+    service = StickerService(StickerStore(tmp_path / "stickers"))
+
+    result = asyncio.run(
+        service.consider(
+            DummyEvent(DummyImage(image_path)),
+            identity(),
+            {
+                "should_collect": True,
+                "asset_kind": "photo",
+                "reaction_ready": True,
+                "confidence": 1.0,
+                "meaning": "可爱白猫",
+                "tags": ["白猫", "可爱"],
+            },
+        )
+    )
+
+    assert result == {
+        "collected": False,
+        "reason": "unsuitable_image_kind",
+        "asset_kind": "photo",
+    }
+    assert service.store.list_for("100") == ()
+
+
+def test_service_rejects_low_confidence_reaction(tmp_path: Path) -> None:
+    image_path = tmp_path / "meme.jpg"
+    image_path.write_bytes(b"image-data")
+    service = StickerService(StickerStore(tmp_path / "stickers"))
+
+    result = asyncio.run(
+        service.consider(
+            DummyEvent(DummyImage(image_path)),
+            identity(),
+            {
+                "should_collect": True,
+                "asset_kind": "meme",
+                "reaction_ready": True,
+                "confidence": 0.89,
+                "meaning": "无语吐槽",
+                "tags": ["无语"],
+            },
+        )
+    )
+
+    assert result["collected"] is False  # type: ignore[index]
+    assert result["reason"] == "confidence_below_threshold"  # type: ignore[index]
+    assert service.store.list_for("100") == ()
+
+
 def test_service_exposes_provider_readable_image_urls(tmp_path: Path) -> None:
     image_path = tmp_path / "source.jpg"
     image_path.write_bytes(b"image-data")
@@ -217,6 +270,9 @@ def test_runtime_sends_saved_sticker_as_onebot_image(tmp_path: Path) -> None:
             "sticker.consider",
             {
                 "should_collect": True,
+                "asset_kind": "reaction_sticker",
+                "reaction_ready": True,
+                "confidence": 0.95,
                 "meaning": "开心",
                 "tags": ["开心"],
             },
@@ -251,7 +307,14 @@ def test_collection_calls_native_custom_face_action(tmp_path: Path) -> None:
     result = asyncio.run(
         runtime.execute(
             "sticker.consider",
-            {"should_collect": True, "meaning": "开心", "tags": ["开心"]},
+            {
+                "should_collect": True,
+                "asset_kind": "reaction_sticker",
+                "reaction_ready": True,
+                "confidence": 0.95,
+                "meaning": "开心",
+                "tags": ["开心"],
+            },
             ToolContext(identity()),
         )
     )
@@ -328,6 +391,51 @@ def test_native_face_fields_are_persisted_and_sent_as_mface(tmp_path: Path) -> N
     ]
 
 
+def test_only_owner_can_list_and_delete_shared_stickers(tmp_path: Path) -> None:
+    source = tmp_path / "source.png"
+    source.write_bytes(b"png-data")
+    store = StickerStore(tmp_path / "stickers")
+    added = store.add(
+        b"png-data",
+        media_type="image/png",
+        meaning="需要清理的旧图",
+        tags=("旧图",),
+        group_id="100",
+        source_message_id="m1",
+        source_user_id="42",
+    )
+    path = store.file_path(added.record)
+    runtime = OneBotToolRuntime.from_client(
+        OneBotActionClient(FakeActionClient().call_action),
+        sticker_store=store,
+    )
+
+    denied = asyncio.run(
+        runtime.execute(
+            "sticker.delete",
+            {"sticker_id": added.record.sticker_id},
+            ToolContext(identity()),
+        )
+    )
+    owner = ToolContext(Identity("1", "", UserRole.OWNER, "owner"))
+    listed = asyncio.run(runtime.execute("sticker.list", {}, owner))
+    deleted = asyncio.run(
+        runtime.execute(
+            "sticker.delete",
+            {"sticker_id": added.record.sticker_id},
+            owner,
+        )
+    )
+
+    assert denied.code is ToolResultCode.ROLE_DENIED
+    assert listed.code is ToolResultCode.SUCCESS
+    assert listed.value["stickers"][0]["sticker_id"] == added.record.sticker_id  # type: ignore[index]
+    assert deleted.code is ToolResultCode.SUCCESS
+    assert deleted.value["deleted"] is True  # type: ignore[index]
+    assert store.get(added.record.sticker_id) is None
+    assert not path.exists()
+
+
 def test_native_face_parser_accepts_napcat_detail_shape() -> None:
     parsed = parse_native_sticker(
         {
@@ -388,7 +496,14 @@ def test_personal_native_face_is_persisted_and_sent_by_qq_url(tmp_path: Path) ->
     result = asyncio.run(
         runtime.execute(
             "sticker.consider",
-            {"should_collect": True, "meaning": "个人收藏", "tags": []},
+            {
+                "should_collect": True,
+                "asset_kind": "reaction_sticker",
+                "reaction_ready": True,
+                "confidence": 0.95,
+                "meaning": "个人收藏",
+                "tags": [],
+            },
             ToolContext(identity()),
         )
     )

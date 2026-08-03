@@ -92,6 +92,9 @@ def test_unknown_capability_is_denied() -> None:
         (UserRole.MEMBER, "message.recall", False),
         (UserRole.GROUP_ADMIN, "message.recall", True),
         (UserRole.OWNER, "message.recall", True),
+        (UserRole.MEMBER, "sticker.manage", False),
+        (UserRole.GROUP_ADMIN, "sticker.manage", False),
+        (UserRole.OWNER, "sticker.manage", True),
     ],
 )
 def test_tool_permission_keys(role: UserRole, permission: str, allowed: bool) -> None:

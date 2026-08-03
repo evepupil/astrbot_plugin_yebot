@@ -8,11 +8,12 @@ import os
 import re
 import tempfile
 from collections.abc import Iterable
+from contextlib import suppress
 from datetime import datetime
 from pathlib import Path
 from typing import NamedTuple
 
-from .models import StickerRecord
+from .models import StickerKind, StickerRecord
 
 
 class StickerAddResult(NamedTuple):
@@ -41,6 +42,8 @@ class StickerStore:
         group_id: str,
         source_message_id: str,
         source_user_id: str,
+        asset_kind: StickerKind = StickerKind.LEGACY,
+        confidence: float = 0.0,
         suffix: str = ".jpg",
     ) -> StickerAddResult:
         if not data:
@@ -75,6 +78,8 @@ class StickerStore:
             group_id=normalized_group,
             source_message_id=source_message_id,
             source_user_id=source_user_id,
+            asset_kind=asset_kind,
+            confidence=confidence,
         )
         self._records[record.sticker_id] = record
         self._flush()
@@ -127,6 +132,8 @@ class StickerStore:
             group_id=record.group_id,
             source_message_id=record.source_message_id,
             source_user_id=record.source_user_id,
+            asset_kind=record.asset_kind,
+            confidence=record.confidence,
             created_at=record.created_at,
             use_count=record.use_count + 1,
             emoji_id=record.emoji_id,
@@ -168,6 +175,8 @@ class StickerStore:
             group_id=record.group_id,
             source_message_id=record.source_message_id,
             source_user_id=record.source_user_id,
+            asset_kind=record.asset_kind,
+            confidence=record.confidence,
             created_at=record.created_at,
             use_count=record.use_count,
             emoji_id=emoji_id,
@@ -181,6 +190,23 @@ class StickerStore:
         self._records[updated.sticker_id] = updated
         self._flush()
         return updated
+
+    def delete(self, sticker_id: str) -> StickerRecord | None:
+        """Remove one record and its local source file from YeBot's library."""
+
+        record = self._records.pop(sticker_id.strip(), None)
+        if record is None:
+            return None
+        self._flush()
+        path = (self.root / record.relative_path).resolve()
+        try:
+            path.relative_to(self.root)
+        except ValueError:
+            return record
+        # The index is authoritative, so a stale orphan cannot be sent.
+        with suppress(OSError):
+            path.unlink(missing_ok=True)
+        return record
 
     def file_path(self, record: StickerRecord) -> Path:
         path = (self.root / record.relative_path).resolve()
@@ -233,7 +259,7 @@ class StickerStore:
     def _flush(self) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
         payload = {
-            "version": 1,
+            "version": 2,
             "stickers": [_encode(record) for record in self.list_all()],
         }
         fd, temporary = tempfile.mkstemp(
@@ -267,6 +293,8 @@ def _encode(record: StickerRecord) -> dict[str, object]:
         "group_id": record.group_id,
         "source_message_id": record.source_message_id,
         "source_user_id": record.source_user_id,
+        "asset_kind": record.asset_kind.value,
+        "confidence": record.confidence,
         "created_at": record.created_at.isoformat(),
         "use_count": record.use_count,
         "emoji_id": record.emoji_id,
@@ -296,6 +324,8 @@ def _decode(value: object) -> StickerRecord | None:
             group_id=str(value["group_id"]),
             source_message_id=str(value.get("source_message_id", "")),
             source_user_id=str(value.get("source_user_id", "")),
+            asset_kind=StickerKind(str(value.get("asset_kind", StickerKind.LEGACY))),
+            confidence=float(value.get("confidence", 0.0)),
             created_at=datetime.fromisoformat(str(value["created_at"])),
             use_count=int(value.get("use_count", 0)),
             emoji_id=str(value.get("emoji_id", "")),

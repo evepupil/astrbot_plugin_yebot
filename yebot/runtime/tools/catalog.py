@@ -210,8 +210,8 @@ MODEL_RATINGS = ToolDefinition(
 STICKER_CONSIDER = ToolDefinition(
     name="sticker.consider",
     description=(
-        "After viewing the current message image, decide whether to save it "
-        "with meaning and tags."
+        "Save only a high-confidence standalone meme, reaction sticker, or "
+        "cartoon reaction after classifying the current message image."
     ),
     permission="sticker.consider",
     parameters=(
@@ -263,6 +263,8 @@ MEMORY_REMEMBER = ToolDefinition(
     name="memory.remember",
     description="Store one explicit, scoped fact or preference for later recall.",
     permission="memory.write",
+        ParameterSpec("asset_kind", ParameterType.STRING, max_length=32),
+        ParameterSpec("reaction_ready", ParameterType.BOOLEAN),
     parameters=(
         ParameterSpec("scope", ParameterType.STRING, required=False, max_length=16),
         ParameterSpec("topic", ParameterType.STRING, min_length=1, max_length=120),
@@ -272,7 +274,6 @@ MEMORY_REMEMBER = ToolDefinition(
         ParameterSpec(
             "confidence",
             ParameterType.NUMBER,
-            required=False,
             minimum=0,
             maximum=1,
         ),
@@ -306,6 +307,28 @@ MEMORY_FORGET = ToolDefinition(
     permission="memory.forget",
     parameters=(
         ParameterSpec("memory_id", ParameterType.STRING, min_length=1, max_length=100),
+STICKER_LIST = ToolDefinition(
+    name="sticker.list",
+    description="List recent YeBot stickers for owner review and cleanup.",
+    permission="sticker.manage",
+    parameters=(
+        ParameterSpec(
+            "limit", ParameterType.INTEGER, required=False, minimum=1, maximum=50
+        ),
+    ),
+    risk=ToolRisk.LOW,
+)
+
+STICKER_DELETE = ToolDefinition(
+    name="sticker.delete",
+    description="Delete one named sticker from YeBot's shared local library.",
+    permission="sticker.manage",
+    parameters=(
+        ParameterSpec("sticker_id", ParameterType.STRING, min_length=1, max_length=100),
+    ),
+    risk=ToolRisk.MEDIUM,
+)
+
     ),
     risk=ToolRisk.LOW,
 )
@@ -335,3 +358,5 @@ TOOL_CATALOG: tuple[ToolDefinition, ...] = (
     MEMORY_RECALL,
     MEMORY_FORGET,
 )
+    STICKER_LIST,
+    STICKER_DELETE,

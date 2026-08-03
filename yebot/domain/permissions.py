@@ -135,6 +135,9 @@ TOOL_PERMISSION_POLICIES: Final[Mapping[str, CapabilityPolicy]] = MappingProxyTy
         "memory.read": CapabilityPolicy(frozenset(UserRole), PermissionScope.GLOBAL),
         "memory.write": CapabilityPolicy(frozenset(UserRole), PermissionScope.GLOBAL),
         "memory.forget": CapabilityPolicy(frozenset(UserRole), PermissionScope.GLOBAL),
+        "sticker.manage": CapabilityPolicy(
+            frozenset({UserRole.OWNER}), PermissionScope.GLOBAL
+        ),
     }
 )
 

@@ -256,9 +256,16 @@ YeBot 工具选择规则：
   content 两个文本字段，目标人物使用 speaker=target。工具会读取当前群昵称，并为每个节点
   追加 `（虚构）`。不得试图自行添加、删除或隐藏该标识，也不得构造 QQ 号、CQ 码、图片或
   其他消息段。
-- 收到图片并完成识图后，判断图片是否适合以后当表情包使用；应调用表情收藏入口提交
-  should_collect、图片含义和简短标签，即使决定不收藏也要明确提交决定。不要向用户要求
-  说出工具名。表情库由所有群共享，重复图片不会重复保存。
+- 收到图片并完成识图后，先按 meme、reaction_sticker、cartoon_reaction、photo、
+  screenshot、document、other 之一分类。普通真人/宠物/美食/风景照片，即使有情绪，
+  也必须视为 photo，不得收藏；截图、文档和普通照片一律不得收藏。只有已经是梗图、
+  表情反应图或卡通反应图，且可以脱离原聊天单独回复时才允许收藏。调用收藏入口时必须
+  提交 should_collect、asset_kind、reaction_ready、confidence、图片含义和简短标签；
+  即使决定不收藏也要明确提交分类决定。不要向用户要求说出工具名。表情库由所有群共享，
+  重复图片不会重复保存。
+- 只有主人要求查看或清理表情库时，才调用 yebot_sticker_list 或
+  yebot_sticker_delete。删除前先查询列表或搜索确认 sticker_id，不得编造 ID；删除仅
+  影响 YeBot 共享库，不代表删除 QQ 客户端个人收藏。
 - 用户想发表情包时，先按语境调用表情搜索，再从候选中选择合适的一张调用发送入口；
   发送成功以工具返回的 sent 和 sticker_id 为准，不能凭空声称已发送。
 - 踢人工具返回 confirmation_required 时，只展示确认编号并等待用户明确确认；
@@ -380,7 +387,17 @@ class YeBot(Star):
             _as_text(values.get("sticker_store_path"), "data/yebot_stickers"),
             max_bytes=_as_int(values.get("sticker_max_bytes"), 10_000_000),
         )
-        self._sticker_service = StickerService(self._sticker_store)
+        self._sticker_collect_min_confidence = min(
+            1.0,
+            max(
+                0.0,
+                _as_float(values.get("sticker_auto_collect_min_confidence"), 0.9),
+            ),
+        )
+        self._sticker_service = StickerService(
+            self._sticker_store,
+            min_auto_collect_confidence=self._sticker_collect_min_confidence,
+        )
         self._sticker_auto_collect = _as_bool(values.get("sticker_auto_collect"), True)
         self._sticker_auto_send = _as_bool(values.get("sticker_auto_send"), True)
         self._sticker_agent_max_steps = _as_int(
@@ -525,6 +542,9 @@ class YeBot(Star):
         identity = parse_identity(raw_event, self._owner_ids)
         context = ToolContext(
             identity=identity,
+            sticker_min_auto_collect_confidence=(
+                self._sticker_collect_min_confidence
+            ),
             target_group_id=normalize_id(target_group_id)
             or normalize_id(raw_event.get("group_id"))
             or None,
@@ -597,6 +617,9 @@ class YeBot(Star):
             identity=identity,
             target_group_id=normalize_id(raw_event.get("group_id")) or None,
             request_id=request_id or _request_id(event),
+            sticker_min_auto_collect_confidence=(
+                self._sticker_collect_min_confidence
+            ),
             protected_target_ids=tuple((*self._owner_ids, self._bot_id)),
         )
         return await runtime.confirm(confirmation_id, context)
@@ -716,8 +739,9 @@ class YeBot(Star):
                     continue
                 response = text_chat(
                     prompt=(
-                        "请按图片顺序用中文简要描述这些图片，说明画面内容、文字和适合表达的情绪。"
-                        "只输出描述，不要回复群友。"
+                        "请按图片顺序用中文客观描述这些图片，说明画面内容、可见文字和视觉类型。"
+                        "视觉类型可用普通照片、截图、文档、梗图、表情反应图、卡通反应图或其他。"
+                        "不要判断是否值得收藏、是否适合表达情绪，也不要回复群友。"
                     ),
                     image_urls=list(image_urls),
                 )
@@ -801,19 +825,27 @@ class YeBot(Star):
             )
             _, state = await self._run_restricted_sticker_agent(
                 event,
-                prompt=(
-                    "Inspect every image in this group message. Decide whether any "
-                    "image is genuinely reusable as a group sticker. Call "
-                    "yebot_sticker_consider exactly once for each useful image, "
-                    "including a concise Chinese meaning and a few search tags. "
-                    "For images that are not useful, call it with should_collect "
-                    "false. Do not explain the decision to the group." + caption_hint
-                ),
+                prompt=collection_prompt + caption_hint,
                 image_urls=image_urls,
                 allowed_tools=("yebot_sticker_consider",),
                 mode="sticker_collect",
             )
             logger.info(
+            collection_prompt = (
+                "Inspect every image in this group message. Classify each image as "
+                "exactly one of meme, reaction_sticker, cartoon_reaction, photo, "
+                "screenshot, document, or other. Ordinary real-life photos of "
+                "people, pets, food, products, places, or scenery are always photo, "
+                "even when the subject looks cute or expressive. Screenshots and "
+                "documents must never be collected. Call yebot_sticker_consider "
+                "exactly once per image. Set should_collect true only for an "
+                "already-made meme, reaction sticker, or cartoon reaction that can "
+                "independently reply to a group message; then set reaction_ready true "
+                "and confidence at least 0.90. For every other image set "
+                "should_collect false and reaction_ready false. Always provide "
+                "asset_kind, confidence, concise Chinese meaning, and short search "
+                "tags. Do not explain the decision to the group."
+            )
                 "YeBot automatic sticker collection finished "
                 "message=%s collected=%s caption=%s",
                 _request_id(event),
@@ -1519,7 +1551,6 @@ class YeBot(Star):
         meaning: str = "",
         tags: list[str] | None = None,
         image_index: float = 0,
-        confidence: float = 0,
     ) -> str:
         """完成识图后决定是否收藏当前消息中的图片。
 
@@ -1531,7 +1562,9 @@ class YeBot(Star):
             confidence(number): 模型对判断的置信度。
         """
 
-        del confidence
+        asset_kind: str,
+        reaction_ready: bool,
+        confidence: float,
         index: object = image_index
         if isinstance(image_index, float) and image_index.is_integer():
             index = int(image_index)
@@ -1541,6 +1574,9 @@ class YeBot(Star):
             "image_index": index,
         }
         if tags is not None:
+            asset_kind(string): 图片分类：meme、reaction_sticker、cartoon_reaction、
+                photo、screenshot、document 或 other。
+            reaction_ready(boolean): 是否可脱离原聊天独立作为反应图使用。
             arguments["tags"] = tags
         result = await self._run_single_tool(event, "sticker.consider", arguments)
         state = _AUTO_STICKER_SEND_STATE.get()
@@ -1553,8 +1589,11 @@ class YeBot(Star):
     @filter.llm_tool(name="yebot_sticker_search")
     async def llm_sticker_search(
         self,
+            "asset_kind": asset_kind,
+            "reaction_ready": reaction_ready,
         event: AstrMessageEvent,
         query: str = "",
+            "confidence": confidence,
         limit: float = 5,
     ) -> str:
         """按当前对话语境搜索当前群的表情包。
@@ -1591,6 +1630,41 @@ class YeBot(Star):
         if state is not None and state.get("sent"):
             return json.dumps(
                 {
+    @filter.llm_tool(name="yebot_sticker_list")
+    async def llm_sticker_list(
+        self,
+        event: AstrMessageEvent,
+        limit: float = 20,
+    ) -> str:
+        """列出最近收藏的表情，供主人检查和清理。"""
+
+        bounded_limit: object = limit
+        if isinstance(limit, float) and limit.is_integer():
+            bounded_limit = int(limit)
+        return self._encode_run(
+            await self._run_single_tool(
+                event,
+                "sticker.list",
+                {"limit": bounded_limit},
+            )
+        )
+
+    @filter.llm_tool(name="yebot_sticker_delete")
+    async def llm_sticker_delete(
+        self,
+        event: AstrMessageEvent,
+        sticker_id: str,
+    ) -> str:
+        """从 YeBot 共享表情库删除一张已确认的表情。"""
+
+        return self._encode_run(
+            await self._run_single_tool(
+                event,
+                "sticker.delete",
+                {"sticker_id": sticker_id},
+            )
+        )
+
                     "status": "failed",
                     "summary": "automatic sticker send limit reached",
                 },

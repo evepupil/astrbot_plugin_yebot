@@ -4,6 +4,21 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from enum import StrEnum
+from math import isfinite
+
+
+class StickerKind(StrEnum):
+    """Visual classes used to keep automatic collection reaction-focused."""
+
+    MEME = "meme"
+    REACTION_STICKER = "reaction_sticker"
+    CARTOON_REACTION = "cartoon_reaction"
+    PHOTO = "photo"
+    SCREENSHOT = "screenshot"
+    DOCUMENT = "document"
+    OTHER = "other"
+    LEGACY = "legacy"
 
 
 @dataclass(frozen=True, slots=True)
@@ -19,6 +34,8 @@ class StickerRecord:
     group_id: str
     source_message_id: str
     source_user_id: str
+    asset_kind: StickerKind = StickerKind.LEGACY
+    confidence: float = 0.0
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     use_count: int = 0
     emoji_id: str = ""
@@ -45,6 +62,18 @@ class StickerRecord:
             raise ValueError("sticker identity and meaning fields must not be empty")
         if self.use_count < 0:
             raise ValueError("sticker use_count must be non-negative")
+        if not isinstance(self.asset_kind, StickerKind):
+            try:
+                object.__setattr__(self, "asset_kind", StickerKind(self.asset_kind))
+            except (TypeError, ValueError) as error:
+                raise ValueError("sticker asset_kind is invalid") from error
+        if (
+            not isinstance(self.confidence, (int, float))
+            or isinstance(self.confidence, bool)
+            or not isfinite(self.confidence)
+            or not 0 <= self.confidence <= 1
+        ):
+            raise ValueError("sticker confidence must be between 0 and 1")
         if (
             not isinstance(self.emoji_package_id, int)
             or isinstance(self.emoji_package_id, bool)
@@ -62,6 +91,7 @@ class StickerRecord:
             self, "source_message_id", self.source_message_id.strip()[:128]
         )
         object.__setattr__(self, "source_user_id", self.source_user_id.strip()[:64])
+        object.__setattr__(self, "confidence", float(self.confidence))
         object.__setattr__(self, "created_at", _utc(self.created_at))
         object.__setattr__(self, "emoji_id", self.emoji_id.strip()[:256])
         object.__setattr__(self, "key", self.key.strip()[:512])

@@ -118,6 +118,14 @@
     "description": "Let the restricted sticker agent occasionally search and send one suitable saved sticker.",
     "default": true
   },
+  "sticker_auto_collect_min_confidence": {
+    "type": "float",
+    "title": "Automatic sticker collection confidence",
+    "description": "Minimum confidence required after strict meme/reaction image classification. Ordinary photos, screenshots, and documents are always rejected.",
+    "default": 0.9,
+    "minimum": 0.5,
+    "maximum": 1
+  },
   "sticker_agent_max_steps": {
     "type": "int",
     "title": "Sticker agent step limit",

@@ -7,14 +7,22 @@ import inspect
 import logging
 import mimetypes
 from collections.abc import Mapping
+from math import isfinite
 from pathlib import Path
 
 from ...domain.identity import Identity
-from .models import StickerRecord
+from .models import StickerKind, StickerRecord
 from .native import NativeStickerClient
 from .store import StickerAddResult, StickerStore
 
 _LOGGER = logging.getLogger(__name__)
+_COLLECTIBLE_STICKER_KINDS = frozenset(
+    {
+        StickerKind.MEME,
+        StickerKind.REACTION_STICKER,
+        StickerKind.CARTOON_REACTION,
+    }
+)
 
 
 def extract_image_components(event: object) -> tuple[object, ...]:
@@ -42,9 +50,17 @@ class StickerService:
         self,
         store: StickerStore,
         native_client: NativeStickerClient | None = None,
+        *,
+        min_auto_collect_confidence: float = 0.9,
     ) -> None:
+        if (
+            not isfinite(min_auto_collect_confidence)
+            or not 0 <= min_auto_collect_confidence <= 1
+        ):
+            raise ValueError("minimum sticker confidence must be between 0 and 1")
         self.store = store
         self.native_client = native_client
+        self.min_auto_collect_confidence = min_auto_collect_confidence
 
     async def image_urls(self, event: object) -> tuple[str, ...]:
         """Resolve current image components into provider-readable local paths."""
@@ -82,6 +98,23 @@ class StickerService:
             raise ValueError("should_collect must be a boolean")
         if not should_collect:
             return {"collected": False, "reason": "model_decided_not_useful"}
+        asset_kind = _sticker_kind(arguments.get("asset_kind"))
+        if asset_kind not in _COLLECTIBLE_STICKER_KINDS:
+            return {
+                "collected": False,
+                "reason": "unsuitable_image_kind",
+                "asset_kind": asset_kind.value,
+            }
+        if arguments.get("reaction_ready") is not True:
+            return {"collected": False, "reason": "not_a_standalone_reaction"}
+        confidence = _confidence(arguments.get("confidence"))
+        if confidence < self.min_auto_collect_confidence:
+            return {
+                "collected": False,
+                "reason": "confidence_below_threshold",
+                "confidence": confidence,
+                "minimum_confidence": self.min_auto_collect_confidence,
+            }
         meaning = arguments.get("meaning", "")
         if not isinstance(meaning, str):
             raise ValueError("meaning must be a string")
@@ -109,12 +142,30 @@ class StickerService:
             group_id=identity.group_id,
             source_message_id=_event_message_id(event),
             source_user_id=identity.user_id,
+            asset_kind=asset_kind,
+            confidence=confidence,
             suffix=suffix,
         )
         record, native_synced = await self.ensure_native(result.record)
         payload = _serialize_add(StickerAddResult(record, result.duplicate))
         payload["native_synced"] = native_synced
         return payload
+
+    def list_for_review(self, limit: int) -> object:
+        return {
+            "stickers": [
+                _serialize_review_record(record)
+                for record in self.store.list_recent(limit)
+            ]
+        }
+
+    def delete(self, sticker_id: str) -> object:
+        record = self.store.delete(sticker_id)
+        return {
+            "sticker_id": sticker_id.strip(),
+            "deleted": record is not None,
+            "meaning": record.meaning if record is not None else "",
+        }
 
     async def ensure_native(self, record: StickerRecord) -> tuple[StickerRecord, bool]:
         """Add one local record to QQ's custom-face library when needed."""
@@ -237,6 +288,24 @@ def _event_message_id(event: object) -> str:
     return str(getattr(message_obj, "message_id", "")).strip()[:128]
 
 
+def _sticker_kind(value: object) -> StickerKind:
+    if not isinstance(value, str):
+        raise ValueError("asset_kind must be a string")
+    try:
+        return StickerKind(value.strip().lower())
+    except ValueError as error:
+        raise ValueError("asset_kind is invalid") from error
+
+
+def _confidence(value: object) -> float:
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        raise ValueError("confidence must be numeric")
+    confidence = float(value)
+    if not isfinite(confidence) or not 0 <= confidence <= 1:
+        raise ValueError("confidence must be between 0 and 1")
+    return confidence
+
+
 def _serialize_add(result: StickerAddResult) -> dict[str, object]:
     return {
         "collected": True,
@@ -253,5 +322,13 @@ def _serialize(record: StickerRecord) -> dict[str, object]:
         "media_type": record.media_type,
         "use_count": record.use_count,
         "source_group_id": record.group_id,
+        "asset_kind": record.asset_kind.value,
+        "confidence": record.confidence,
         "native_available": record.has_native_asset,
     }
+
+
+def _serialize_review_record(record: StickerRecord) -> dict[str, object]:
+    value = _serialize(record)
+    value["created_at"] = record.created_at.isoformat()
+    return value

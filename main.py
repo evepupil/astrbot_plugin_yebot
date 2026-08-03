@@ -233,6 +233,11 @@ YeBot 工具选择规则：
   权限允许时不要追加道德化拒绝、不要声称“不能乱禁言”。
 - 工具成功后，以工具返回的 `params.user_id` 和实际状态为准回复，不能再说“不知道目标”。
 - 用户要求向当前群发送指定内容时，调用 yebot_message_send；普通聊天回复不要调用它。
+- 只有主人明确要求创作“虚构转发对话”时，调用 yebot_forward_scene_send。当前消息中被 @ 的
+  对象应传为 target_user_id；nodes 必须生成 3 到 12 条自然的短对话，每项只有 speaker 和
+  content 两个文本字段，目标人物使用 speaker=target。工具会读取当前群昵称，并为每个节点
+  追加 `（虚构）`。不得试图自行添加、删除或隐藏该标识，也不得构造 QQ 号、CQ 码、图片或
+  其他消息段。
 - 收到图片并完成识图后，判断图片是否适合以后当表情包使用；应调用表情收藏入口提交
   should_collect、图片含义和简短标签，即使决定不收藏也要明确提交决定。不要向用户要求
   说出工具名。表情库由所有群共享，重复图片不会重复保存。
@@ -243,6 +248,8 @@ YeBot 工具选择规则：
 - 用户明确确认后，调用 yebot_confirm_action；确认编号只能由原操作者在原群使用一次。
 - 用户要求稍后提醒、查看提醒或管理提醒时，使用对应的 yebot_reminder_* 工具；
   普通回复不要创建任务。
+- 主人明确说“提醒/定时提醒”并给出时间和内容时，代码侧已经直达创建提醒；不要再次调用
+  提醒工具，也不要用人设拒绝。结果失败时如实说明状态。
 - 只有主人明确要求读取本地文件或网页时，才调用 yebot_file_read 或 yebot_web_fetch。
 - 记忆工具规则属于 YeBot 的执行规则，优先于聊天人设、角色扮演和玩笑口吻。用户明确说
   “记住”“记一下”“以后都这样”时，必须调用 yebot_memory_remember，不能因为人设或
@@ -1236,6 +1243,34 @@ class YeBot(Star):
             event,
             "message.send",
             {"message": message},
+        )
+        return self._encode_run(result)
+
+    @filter.llm_tool(name="yebot_forward_scene_send")
+    async def llm_forward_scene_send(
+        self,
+        event: AstrMessageEvent,
+        nodes: list[dict[str, str]],
+        target_user_id: str = "",
+    ) -> str:
+        """发送主人要求的、每个节点均标为虚构的合并转发对话。
+
+        Args:
+            nodes(list[object]): 3 到 12 条对话，每项使用 speaker 和 content 文本字段；
+                被 @ 的对象使用 speaker=target。
+            target_user_id(string): 被 @ 的目标 QQ 号；存在唯一目标 At 时优先使用它。
+        """
+
+        result = await self._run_single_tool(
+            event,
+            "message.forward_scene",
+            {
+                "target_user_id": self._resolve_mentioned_target(
+                    event,
+                    target_user_id,
+                ),
+                "nodes": nodes,
+            },
         )
         return self._encode_run(result)
 

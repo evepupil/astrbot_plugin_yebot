@@ -13,6 +13,7 @@ from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 from ...domain.identity import normalize_id
+from ..forwarding import build_forward_scene
 from ..guardrails import GuardrailManager
 from ..jobs import Job, JobScheduler
 from ..memory import MemoryService
@@ -20,6 +21,7 @@ from ..release import RuntimeMetrics
 from ..stickers import NativeStickerClient, StickerService, StickerStore
 from .catalog import (
     FILE_READ,
+    FORWARD_SCENE_SEND,
     GROUP_GET_MEMBERS,
     GROUP_GET_RANDOM_MEMBER,
     GROUP_GET_RECENT_SPEAKERS,
@@ -123,6 +125,7 @@ class OneBotToolRuntime:
         registry.register(GROUP_MUTE_MEMBER, handlers.mute_member)
         registry.register(GROUP_UNMUTE_MEMBER, handlers.unmute_member)
         registry.register(MESSAGE_SEND, handlers.send_message)
+        registry.register(FORWARD_SCENE_SEND, handlers.send_forward_scene)
         if scheduler is not None:
             registry.register(REMINDER_CREATE, handlers.create_reminder)
             registry.register(REMINDER_LIST, handlers.list_reminders)
@@ -347,6 +350,41 @@ class _OneBotHandlers:
             raise ValueError("message must be a string")
         params: dict[str, object] = {"group_id": group_id, "message": message}
         return await self._mutating_action("send_group_msg", params)
+
+    async def send_forward_scene(
+        self,
+        context: ToolContext,
+        arguments: Mapping[str, object],
+    ) -> object:
+        group_id = _numeric_id(context.target_group_id, "group_id")
+        target_user_id = _numeric_id(arguments["target_user_id"], "target_user_id")
+        target_nickname = await self._get_member_display_name(group_id, target_user_id)
+        nodes = build_forward_scene(
+            arguments["nodes"],
+            target_nickname=target_nickname,
+        )
+        messages = [
+            {
+                "type": "node",
+                "data": {
+                    "user_id": "0",
+                    "nickname": node.nickname,
+                    "content": [{"type": "text", "data": {"text": node.content}}],
+                },
+            }
+            for node in nodes
+        ]
+        result = await self._mutating_action(
+            "send_group_forward_msg",
+            {"group_id": group_id, "messages": messages},
+        )
+        dry_run = isinstance(result, Mapping) and result.get("dry_run") is True
+        return {
+            "node_count": len(nodes),
+            "target_nickname": f"{target_nickname}（虚构）",
+            "sent": not dry_run,
+            "result": result,
+        }
 
     async def create_reminder(
         self,
@@ -662,6 +700,23 @@ class _OneBotHandlers:
             role == "admin" and context.identity.role.value != "owner"
         ):
             raise PermissionError("target member role is protected")
+
+    async def _get_member_display_name(self, group_id: int, user_id: int) -> str:
+        response = await self._client.call_action(
+            "get_group_member_info",
+            group_id=group_id,
+            user_id=user_id,
+        )
+        candidate: object = response
+        if isinstance(response, Mapping) and isinstance(response.get("data"), Mapping):
+            candidate = response["data"]
+        if not isinstance(candidate, Mapping):
+            raise ValueError("OneBot returned no target member")
+        return (
+            _safe_text(candidate.get("card"), 32)
+            or _safe_text(candidate.get("nickname"), 32)
+            or f"QQ{user_id}"
+        )
 
 
 def _numeric_id(value: object, name: str) -> int:

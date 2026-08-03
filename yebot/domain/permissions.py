@@ -77,6 +77,9 @@ TOOL_PERMISSION_POLICIES: Final[Mapping[str, CapabilityPolicy]] = MappingProxyTy
         "message.send": CapabilityPolicy(
             frozenset(UserRole), PermissionScope.CURRENT_GROUP
         ),
+        "message.forward_scene": CapabilityPolicy(
+            frozenset({UserRole.OWNER}), PermissionScope.CURRENT_GROUP
+        ),
         "group.member.read": CapabilityPolicy(
             frozenset(UserRole), PermissionScope.CURRENT_GROUP
         ),

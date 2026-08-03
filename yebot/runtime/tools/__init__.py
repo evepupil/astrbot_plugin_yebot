@@ -3,6 +3,7 @@
 from ..guardrails import GuardrailManager
 from .catalog import (
     FILE_READ,
+    FORWARD_SCENE_SEND,
     GROUP_GET_MEMBERS,
     GROUP_GET_RANDOM_MEMBER,
     GROUP_GET_RECENT_SPEAKERS,
@@ -48,6 +49,7 @@ __all__ = [
     "GROUP_KICK_MEMBER",
     "GROUP_MUTE_MEMBER",
     "GROUP_UNMUTE_MEMBER",
+    "FORWARD_SCENE_SEND",
     "FILE_READ",
     "MESSAGE_SEND",
     "MEMORY_FORGET",

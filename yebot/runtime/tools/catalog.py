@@ -72,6 +72,19 @@ MESSAGE_SEND = ToolDefinition(
     risk=ToolRisk.MEDIUM,
 )
 
+FORWARD_SCENE_SEND = ToolDefinition(
+    name="message.forward_scene",
+    description=(
+        "Send a visibly fictional multi-node forward scene to the current group."
+    ),
+    permission="message.forward_scene",
+    parameters=(
+        ParameterSpec("target_user_id", ParameterType.STRING, min_length=1),
+        ParameterSpec("nodes", ParameterType.ARRAY),
+    ),
+    risk=ToolRisk.MEDIUM,
+)
+
 REMINDER_CREATE = ToolDefinition(
     name="reminder.create",
     description="Create a delayed reminder in the current group.",
@@ -262,6 +275,7 @@ TOOL_CATALOG: tuple[ToolDefinition, ...] = (
     GROUP_MUTE_MEMBER,
     GROUP_UNMUTE_MEMBER,
     MESSAGE_SEND,
+    FORWARD_SCENE_SEND,
     REMINDER_CREATE,
     REMINDER_LIST,
     REMINDER_CANCEL,

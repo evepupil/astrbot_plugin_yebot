@@ -218,6 +218,104 @@ def test_member_cannot_invoke_kick_action() -> None:
     assert client.calls == []
 
 
+def test_owner_forward_scene_uses_target_nickname_and_onebot_nodes() -> None:
+    client = FakeActionClient(
+        {
+            "get_group_member_info": {
+                "data": {"user_id": 99, "nickname": "小李", "card": ""}
+            },
+            "send_group_forward_msg": {"status": "ok", "retcode": 0},
+        }
+    )
+    nodes = [
+        {"speaker": "target", "content": "怎么又轮到我了"},
+        {"speaker": "群友甲", "content": "因为你最会整活"},
+        {"speaker": "target", "content": "那我先撤退"},
+    ]
+
+    result = asyncio.run(
+        runtime(client, dry_run=False).execute(
+            "message.forward_scene",
+            {"target_user_id": "99", "nodes": nodes},
+            tool_context(UserRole.OWNER),
+        )
+    )
+
+    assert result.code is ToolResultCode.SUCCESS
+    assert result.value == {
+        "node_count": 3,
+        "target_nickname": "小李（虚构）",
+        "sent": True,
+        "result": {
+            "dry_run": False,
+            "action": "send_group_forward_msg",
+            "params": {
+                "group_id": 100,
+                "messages": [
+                    {
+                        "type": "node",
+                        "data": {
+                            "user_id": "0",
+                            "nickname": "小李（虚构）",
+                            "content": [
+                                {"type": "text", "data": {"text": "怎么又轮到我了"}}
+                            ],
+                        },
+                    },
+                    {
+                        "type": "node",
+                        "data": {
+                            "user_id": "0",
+                            "nickname": "群友甲（虚构）",
+                            "content": [
+                                {"type": "text", "data": {"text": "因为你最会整活"}}
+                            ],
+                        },
+                    },
+                    {
+                        "type": "node",
+                        "data": {
+                            "user_id": "0",
+                            "nickname": "小李（虚构）",
+                            "content": [
+                                {"type": "text", "data": {"text": "那我先撤退"}}
+                            ],
+                        },
+                    },
+                ],
+            },
+            "result": {"status": "ok", "retcode": 0},
+        },
+    }
+    assert client.calls[0] == (
+        "get_group_member_info",
+        {"group_id": 100, "user_id": 99},
+    )
+    assert client.calls[1][0] == "send_group_forward_msg"
+
+
+def test_non_owner_cannot_send_forward_scene() -> None:
+    client = FakeActionClient({})
+
+    result = asyncio.run(
+        runtime(client).execute(
+            "message.forward_scene",
+            {
+                "target_user_id": "99",
+                "nodes": [
+                    {"speaker": "target", "content": "第一条"},
+                    {"speaker": "群友甲", "content": "第二条"},
+                    {"speaker": "群友乙", "content": "第三条"},
+                ],
+            },
+            tool_context(UserRole.MEMBER),
+        )
+    )
+
+    assert result.code is ToolResultCode.ROLE_DENIED
+    assert client.calls == []
+
+
 def test_admin_mutation_is_dry_run_by_default() -> None:
     client = FakeActionClient({})
 

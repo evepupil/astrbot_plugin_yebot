@@ -86,6 +86,9 @@ def test_unknown_capability_is_denied() -> None:
         (UserRole.MEMBER, "group.member.mute", False),
         (UserRole.GROUP_ADMIN, "group.member.mute", True),
         (UserRole.MEMBER, "group.member.read", True),
+        (UserRole.MEMBER, "message.forward_scene", False),
+        (UserRole.GROUP_ADMIN, "message.forward_scene", False),
+        (UserRole.OWNER, "message.forward_scene", True),
     ],
 )
 def test_tool_permission_keys(role: UserRole, permission: str, allowed: bool) -> None:

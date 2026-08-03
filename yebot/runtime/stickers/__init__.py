@@ -1,4 +1,4 @@
-"""Persistent, group-scoped sticker collection and retrieval."""
+"""Persistent, shared sticker collection and retrieval."""
 
 from .models import StickerRecord
 from .native import NativeSticker, NativeStickerClient, parse_native_sticker

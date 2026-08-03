@@ -178,11 +178,11 @@ class StickerService:
         fallback = False
         if not records and query.strip():
             # The agent often describes the requested reaction with words that
-            # are absent from the saved tags. Returning recent group-local
+            # are absent from the saved tags. Returning recent global
             # candidates gives it a chance to choose instead of treating the
             # library as empty.
             bounded_limit = max(1, min(limit, 20))
-            records = self.store.list_for(identity.group_id)[:bounded_limit]
+            records = self.store.list_recent(bounded_limit)
             fallback = bool(records)
         return {
             "count": len(records),

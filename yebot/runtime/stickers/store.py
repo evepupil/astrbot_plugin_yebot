@@ -51,10 +51,13 @@ class StickerStore:
         if not normalized_group:
             raise ValueError("sticker collection requires a group")
         digest = hashlib.sha256(data).hexdigest()
-        sticker_id = f"sticker-{normalized_group}-{digest[:16]}"
-        existing = self._records.get(sticker_id)
+        existing = next(
+            (record for record in self._records.values() if record.digest == digest),
+            None,
+        )
         if existing is not None:
             return StickerAddResult(existing, True)
+        sticker_id = f"sticker-{digest[:16]}"
 
         safe_suffix = _safe_suffix(suffix)
         relative_path = f"files/{digest}{safe_suffix}"
@@ -77,11 +80,15 @@ class StickerStore:
         self._flush()
         return StickerAddResult(record, False)
 
-    def get(self, sticker_id: str, *, group_id: str) -> StickerRecord | None:
-        record = self._records.get(sticker_id.strip())
-        if record is None or record.group_id != group_id.strip():
-            return None
-        return record
+    def get(self, sticker_id: str, *, group_id: str = "") -> StickerRecord | None:
+        """Return a sticker from the shared library.
+
+        ``group_id`` remains accepted for compatibility with older callers, but
+        it is no longer an access boundary.
+        """
+
+        del group_id
+        return self._records.get(sticker_id.strip())
 
     def search(
         self,
@@ -90,15 +97,11 @@ class StickerStore:
         group_id: str,
         limit: int = 5,
     ) -> tuple[StickerRecord, ...]:
-        normalized_group = group_id.strip()
-        if not normalized_group:
-            return ()
+        del group_id
         bounded_limit = max(1, min(limit, 20))
         terms = _terms(query)
         candidates: list[tuple[int, StickerRecord]] = []
         for record in self._records.values():
-            if record.group_id != normalized_group:
-                continue
             haystack = " ".join((record.meaning, *record.tags)).lower()
             score = sum(
                 2 if term == haystack else 1 for term in terms if term in haystack
@@ -110,7 +113,7 @@ class StickerStore:
         candidates.sort(key=lambda item: (-item[0], -item[1].created_at.timestamp()))
         return tuple(record for _, record in candidates[:bounded_limit])
 
-    def mark_used(self, sticker_id: str, *, group_id: str) -> StickerRecord | None:
+    def mark_used(self, sticker_id: str, *, group_id: str = "") -> StickerRecord | None:
         record = self.get(sticker_id, group_id=group_id)
         if record is None:
             return None
@@ -189,18 +192,27 @@ class StickerStore:
             raise FileNotFoundError("sticker file not found")
         return path
 
-    def list_for(self, group_id: str) -> tuple[StickerRecord, ...]:
+    def list_for(self, group_id: str = "") -> tuple[StickerRecord, ...]:
+        """Return the shared library in newest-first order.
+
+        The argument is retained for callers written before the library became
+        global. It is intentionally ignored.
+        """
+
+        del group_id
         return tuple(
             sorted(
-                (
-                    record
-                    for record in self._records.values()
-                    if record.group_id == group_id.strip()
-                ),
+                self._records.values(),
                 key=lambda record: record.created_at,
                 reverse=True,
             )
         )
+
+    def list_recent(self, limit: int = 20) -> tuple[StickerRecord, ...]:
+        """Return the newest records from the shared library."""
+
+        bounded_limit = max(1, min(limit, 20))
+        return self.list_for()[:bounded_limit]
 
     def _load(self) -> None:
         if not self.index_path.exists():

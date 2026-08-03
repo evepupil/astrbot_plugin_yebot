@@ -85,6 +85,10 @@ def identity() -> Identity:
     return Identity("42", "100", UserRole.MEMBER, "member")
 
 
+def other_group_identity() -> Identity:
+    return Identity("77", "200", UserRole.MEMBER, "member")
+
+
 def test_store_deduplicates_and_recovers_from_json(tmp_path: Path) -> None:
     store = StickerStore(tmp_path / "stickers")
     first = store.add(
@@ -111,6 +115,42 @@ def test_store_deduplicates_and_recovers_from_json(tmp_path: Path) -> None:
     assert len(store.search("吐槽", group_id="100")) == 1
     restored = StickerStore(tmp_path / "stickers")
     assert restored.get(first.record.sticker_id, group_id="100") == first.record
+
+
+def test_sticker_library_is_shared_across_groups(tmp_path: Path) -> None:
+    store = StickerStore(tmp_path / "stickers")
+    first = store.add(
+        b"shared-image",
+        media_type="image/jpeg",
+        meaning="全局共享表情",
+        tags=("共享",),
+        group_id="100",
+        source_message_id="m1",
+        source_user_id="42",
+    )
+
+    duplicate = store.add(
+        b"shared-image",
+        media_type="image/jpeg",
+        meaning="另一个群的描述",
+        tags=("另一个群",),
+        group_id="200",
+        source_message_id="m2",
+        source_user_id="77",
+    )
+    service = StickerService(store)
+
+    search = service.search(other_group_identity(), {"query": "共享", "limit": 5})
+    record, path = service.get_for_send(
+        other_group_identity(), first.record.sticker_id
+    )
+
+    assert duplicate.duplicate is True
+    assert duplicate.record.sticker_id == first.record.sticker_id
+    assert search["count"] == 1
+    assert search["stickers"][0]["source_group_id"] == "100"
+    assert record == first.record
+    assert path.is_file()
 
 
 def test_service_can_decline_without_writing(tmp_path: Path) -> None:
@@ -141,7 +181,7 @@ def test_service_exposes_provider_readable_image_urls(tmp_path: Path) -> None:
     assert data_urls == ("data:image/jpeg;base64,aW1hZ2UtZGF0YQ==",)
 
 
-def test_service_search_falls_back_to_recent_group_stickers(tmp_path: Path) -> None:
+def test_service_search_falls_back_to_recent_global_stickers(tmp_path: Path) -> None:
     store = StickerStore(tmp_path / "stickers")
     store.add(
         b"image-data",

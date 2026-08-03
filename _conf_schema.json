@@ -283,6 +283,14 @@
     "minimum": 1,
     "maximum": 1200
   },
+  "image_reference_max_bytes": {
+    "type": "int",
+    "title": "引用图片大小上限",
+    "description": "以图生图读取回复引用图片时允许的最大字节数。",
+    "default": 10000000,
+    "minimum": 100000,
+    "maximum": 50000000
+  },
   "image_daily_limit": {
     "type": "int",
     "title": "普通用户每日生图次数",

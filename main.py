@@ -45,8 +45,11 @@ try:
         GeneratedImage,
         ImageGenerationClient,
         ImageGenerationError,
+        ReplyImage,
+        extract_image_edit_prompt,
         extract_image_prompt,
         is_group_image_request_addressed,
+        resolve_reply_image,
     )
     from .yebot.runtime.jobs import Job, JobScheduler, JsonJobStore
     from .yebot.runtime.memory import (
@@ -98,8 +101,11 @@ except ImportError:
         GeneratedImage,
         ImageGenerationClient,
         ImageGenerationError,
+        ReplyImage,
+        extract_image_edit_prompt,
         extract_image_prompt,
         is_group_image_request_addressed,
+        resolve_reply_image,
     )
     from yebot.runtime.jobs import Job, JobScheduler, JsonJobStore
     from yebot.runtime.memory import (
@@ -359,6 +365,10 @@ class YeBot(Star):
             timeout_seconds=_as_float(
                 values.get("image_request_timeout_seconds"), 180.0
             ),
+        )
+        self._image_reference_max_bytes = max(
+            100_000,
+            _as_int(values.get("image_reference_max_bytes"), 10_000_000),
         )
         self._image_quota = DailyImageQuota(
             _as_text(
@@ -1415,7 +1425,38 @@ class YeBot(Star):
 
         if not self._image_generation_enabled:
             return False
-        prompt = extract_image_prompt(_message_text(event))
+        message_text = _message_text(event)
+        prompt = extract_image_prompt(message_text)
+        edit_prompt = extract_image_edit_prompt(message_text)
+        if prompt is None and edit_prompt is None:
+            return False
+
+        reference_image: ReplyImage | None = None
+        try:
+            reference_image = await resolve_reply_image(
+                event,
+                resolve_event_action_client(event),
+                max_bytes=self._image_reference_max_bytes,
+            )
+        except ImageGenerationError as error:
+            if edit_prompt is None:
+                logger.debug(
+                    "YeBot image reference unavailable message=%s error=%s",
+                    _request_id(event),
+                    str(error),
+                )
+            else:
+                logger.warning(
+                    "YeBot image edit reference failed message=%s error=%s",
+                    _request_id(event),
+                    str(error),
+                )
+                await self._send_image_failure(event)
+                self._stop_image_event(event)
+                return True
+        if edit_prompt is not None and reference_image is None:
+            return False
+        prompt = edit_prompt or prompt
         if prompt is None:
             return False
 
@@ -1441,16 +1482,21 @@ class YeBot(Star):
 
         await self._send_image_text(event, "开始画了")
         self._stop_image_event(event)
-        self._track_background(self._generate_image(event, prompt))
+        self._track_background(self._generate_image(event, prompt, reference_image))
         return True
 
     async def _generate_image(
         self,
         event: AstrMessageEvent,
         prompt: str,
+        reference_image: ReplyImage | None,
     ) -> None:
         try:
-            image = await self._image_client.generate(prompt)
+            image = (
+                await self._image_client.edit(prompt, reference_image.data_url)
+                if reference_image is not None
+                else await self._image_client.generate(prompt)
+            )
             await self._send_generated_image(event, image)
         except ImageGenerationError as error:
             logger.warning(

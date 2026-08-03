@@ -7,6 +7,7 @@ from yebot.runtime.image_generation import (
     DailyImageQuota,
     ImageGenerationClient,
     ImageGenerationError,
+    extract_image_edit_prompt,
     extract_image_prompt,
     is_group_image_request_addressed,
 )
@@ -22,6 +23,14 @@ def test_extract_image_prompt_supports_english_and_rejects_questions() -> None:
     assert extract_image_prompt("draw a tiny red house") == "a tiny red house"
     assert extract_image_prompt("这个图要怎么画") is None
     assert extract_image_prompt("画") is None
+
+
+def test_extract_image_edit_prompt_supports_reference_transform_requests() -> None:
+    assert extract_image_edit_prompt("把这张图改成电影海报风格") == "电影海报风格"
+    assert extract_image_edit_prompt("edit this image into watercolor art") == (
+        "watercolor art"
+    )
+    assert extract_image_edit_prompt("改一下") is None
 
 
 def test_group_image_request_requires_a_mention_to_the_bot() -> None:
@@ -106,6 +115,38 @@ def test_image_client_posts_documented_payload_and_reads_url() -> None:
     assert json.loads(calls[0][2]) == {
         "model": "gpt-image-2",
         "prompt": "一只猫",
+        "n": 1,
+        "size": "1024x1024",
+        "quality": "medium",
+        "response_format": "url",
+    }
+
+
+def test_image_client_posts_documented_edit_payload_and_reads_url() -> None:
+    calls: list[tuple[str, dict[str, str], bytes, float]] = []
+
+    def requester(
+        url: str,
+        headers: dict[str, str] | object,
+        payload: bytes,
+        timeout: float,
+    ) -> tuple[int, bytes]:
+        calls.append((url, dict(headers), payload, timeout))  # type: ignore[arg-type]
+        return 200, json.dumps({"data": [{"url": "/api/storage/edit.png"}]}).encode()
+
+    client = ImageGenerationClient(
+        api_key="test-key",
+        base_url="https://gpt2image.superapi.buzz/",
+        requester=requester,  # type: ignore[arg-type]
+    )
+    image = asyncio.run(client.edit("电影海报风格", "data:image/png;base64,abc"))
+
+    assert image.url == "https://gpt2image.superapi.buzz/api/storage/edit.png"
+    assert calls[0][0] == "https://gpt2image.superapi.buzz/v1/images/edits"
+    assert json.loads(calls[0][2]) == {
+        "model": "gpt-image-2",
+        "prompt": "电影海报风格",
+        "images": [{"image_url": "data:image/png;base64,abc"}],
         "n": 1,
         "size": "1024x1024",
         "quality": "medium",

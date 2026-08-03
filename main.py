@@ -1756,7 +1756,7 @@ class YeBot(Star):
 
     @filter.llm_tool(name="yebot_reminder_list")
     async def llm_reminder_list(self, event: AstrMessageEvent) -> str:
-        """列出当前群中当前操作者可见的提醒任务。"""
+        """列出当前群共享的提醒任务。"""
 
         return self._encode_run(await self._run_single_tool(event, "reminder.list", {}))
 

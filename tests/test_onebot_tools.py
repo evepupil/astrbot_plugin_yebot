@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from yebot.domain.identity import Identity, UserRole
+from yebot.runtime.jobs import JobScheduler, MemoryJobStore
 from yebot.runtime.memory import MemoryService, SQLiteMemoryStore
 from yebot.runtime.model_ratings import ModelRatingsClient
 from yebot.runtime.token_calculator import TokenCalculator
@@ -82,6 +83,42 @@ def test_get_members_calls_onebot_and_sanitizes_result() -> None:
         ],
     }
     assert client.calls == [("get_group_member_list", {"group_id": 100})]
+
+
+def test_reminder_list_is_shared_by_current_group() -> None:
+    client = FakeActionClient({})
+    scheduler = JobScheduler(MemoryJobStore())
+    job = scheduler.create_reminder(
+        Identity("77", "100", UserRole.MEMBER, "member"),
+        delay_seconds=60,
+        message="停止刷屏",
+    )
+    runtime_instance = OneBotToolRuntime.from_client(
+        OneBotActionClient(client.call_action),
+        scheduler=scheduler,
+    )
+
+    result = asyncio.run(
+        runtime_instance.execute("reminder.list", {}, tool_context(UserRole.MEMBER))
+    )
+
+    assert result.code is ToolResultCode.SUCCESS
+    assert result.value == {
+        "jobs": [
+            {
+                "job_id": job.job_id,
+                "kind": "reminder",
+                "status": "pending",
+                "group_id": "100",
+                "owner_id": "77",
+                "message": "停止刷屏",
+                "run_at": job.run_at.isoformat(),
+                "attempts": 0,
+                "last_error": None,
+            }
+        ]
+    }
+    assert client.calls == []
 
 
 def test_get_recent_speakers_reads_distinct_members_from_history() -> None:

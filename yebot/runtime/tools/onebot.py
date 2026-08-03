@@ -509,7 +509,7 @@ class _OneBotHandlers:
         return {
             "jobs": [
                 _serialize_job(job)
-                for job in self._scheduler.list_for(context.identity)
+                for job in self._scheduler.list_for_group(context.identity)
             ]
         }
 
@@ -1008,11 +1008,14 @@ def _safe_result(value: object) -> object:
 
 
 def _serialize_job(job: Job) -> dict[str, object]:
+    message = job.payload.get("message")
     return {
         "job_id": job.job_id,
         "kind": job.kind.value,
         "status": job.status.value,
         "group_id": job.group_id,
+        "owner_id": job.owner_id,
+        "message": message if isinstance(message, str) else "",
         "run_at": job.run_at.isoformat(),
         "attempts": job.attempts,
         "last_error": job.last_error,

@@ -7,7 +7,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 
-from ...domain.identity import Identity, UserRole, normalize_id
+from ...domain.identity import Identity, normalize_id
 from ..release import RuntimeMetrics
 from .models import Job, JobKind, JobStatus
 from .store import JobStore
@@ -60,11 +60,12 @@ class JobScheduler:
         self._store.put(job)
         return job
 
-    def list_for(self, identity: Identity) -> tuple[Job, ...]:
-        jobs = [job for job in self._store.list() if job.group_id == identity.group_id]
-        if identity.role is UserRole.MEMBER:
-            jobs = [job for job in jobs if job.owner_id == identity.user_id]
-        return tuple(jobs)
+    def list_for_group(self, identity: Identity) -> tuple[Job, ...]:
+        """Return every reminder shared by the caller's current group."""
+
+        return tuple(
+            job for job in self._store.list() if job.group_id == identity.group_id
+        )
 
     def cancel(self, identity: Identity, job_id: str) -> Job:
         return self._change_status(identity, job_id, JobStatus.CANCELLED)
@@ -129,8 +130,6 @@ class JobScheduler:
         job = self._store.get(job_id)
         if job is None or job.group_id != identity.group_id:
             raise KeyError("job not found")
-        if identity.role is UserRole.MEMBER and job.owner_id != identity.user_id:
-            raise PermissionError("job belongs to another member")
         if job.status in {JobStatus.COMPLETED, JobStatus.CANCELLED, JobStatus.FAILED}:
             raise ValueError("job is already terminal")
         changed = job.with_update(status=status)

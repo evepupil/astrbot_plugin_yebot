@@ -9,26 +9,35 @@ from yebot.domain.identity import Identity, UserRole
 from yebot.runtime.jobs import JobScheduler, JobStatus, JsonJobStore, MemoryJobStore
 
 
-def identity(user_id: str = "42") -> Identity:
-    return Identity(user_id, "100", UserRole.MEMBER, "member")
+def identity(user_id: str = "42", group_id: str = "100") -> Identity:
+    return Identity(user_id, group_id, UserRole.MEMBER, "member")
 
 
-def test_reminder_lifecycle_and_member_scope() -> None:
+def test_reminder_lifecycle_is_shared_within_group() -> None:
     now = [datetime(2026, 1, 1, tzinfo=UTC)]
     scheduler = JobScheduler(MemoryJobStore(), clock=lambda: now[0])
     job = scheduler.create_reminder(identity(), delay_seconds=60, message="开会")
 
     assert job.status is JobStatus.PENDING
-    assert scheduler.list_for(identity()) == (job,)
-    with pytest.raises(PermissionError):
-        scheduler.cancel(identity("43"), job.job_id)
+    other_member = identity("43")
+    assert scheduler.list_for_group(other_member) == (job,)
 
-    paused = scheduler.pause(identity(), job.job_id)
+    paused = scheduler.pause(other_member, job.job_id)
     assert paused.status is JobStatus.PAUSED
     resumed = scheduler.resume(identity(), job.job_id)
     assert resumed.status is JobStatus.PENDING
-    cancelled = scheduler.cancel(identity(), job.job_id)
+    cancelled = scheduler.cancel(other_member, job.job_id)
     assert cancelled.status is JobStatus.CANCELLED
+
+
+def test_reminder_management_stays_within_current_group() -> None:
+    scheduler = JobScheduler(MemoryJobStore())
+    job = scheduler.create_reminder(identity(), delay_seconds=60, message="提醒")
+    other_group_member = identity("43", "101")
+
+    assert scheduler.list_for_group(other_group_member) == ()
+    with pytest.raises(KeyError):
+        scheduler.cancel(other_group_member, job.job_id)
 
 
 def test_due_job_retries_with_backoff_then_completes() -> None:

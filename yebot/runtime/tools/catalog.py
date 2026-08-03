@@ -122,13 +122,13 @@ REMINDER_CREATE = ToolDefinition(
 
 REMINDER_LIST = ToolDefinition(
     name="reminder.list",
-    description="List reminders visible to the current actor in this group.",
+    description="List every reminder shared by the current group.",
     permission="job.reminder.read",
 )
 
 REMINDER_CANCEL = ToolDefinition(
     name="reminder.cancel",
-    description="Cancel one pending reminder in the current group.",
+    description="Cancel one reminder shared by the current group.",
     permission="job.reminder.manage",
     parameters=(ParameterSpec("job_id", ParameterType.STRING, min_length=1),),
     risk=ToolRisk.MEDIUM,
@@ -136,7 +136,7 @@ REMINDER_CANCEL = ToolDefinition(
 
 REMINDER_PAUSE = ToolDefinition(
     name="reminder.pause",
-    description="Pause one pending reminder in the current group.",
+    description="Pause one reminder shared by the current group.",
     permission="job.reminder.manage",
     parameters=(ParameterSpec("job_id", ParameterType.STRING, min_length=1),),
     risk=ToolRisk.MEDIUM,
@@ -144,7 +144,7 @@ REMINDER_PAUSE = ToolDefinition(
 
 REMINDER_RESUME = ToolDefinition(
     name="reminder.resume",
-    description="Resume one paused reminder in the current group.",
+    description="Resume one paused reminder shared by the current group.",
     permission="job.reminder.manage",
     parameters=(ParameterSpec("job_id", ParameterType.STRING, min_length=1),),
     risk=ToolRisk.MEDIUM,

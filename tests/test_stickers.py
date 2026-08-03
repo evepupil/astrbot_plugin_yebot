@@ -141,9 +141,7 @@ def test_sticker_library_is_shared_across_groups(tmp_path: Path) -> None:
     service = StickerService(store)
 
     search = service.search(other_group_identity(), {"query": "共享", "limit": 5})
-    record, path = service.get_for_send(
-        other_group_identity(), first.record.sticker_id
-    )
+    record, path = service.get_for_send(other_group_identity(), first.record.sticker_id)
 
     assert duplicate.duplicate is True
     assert duplicate.record.sticker_id == first.record.sticker_id

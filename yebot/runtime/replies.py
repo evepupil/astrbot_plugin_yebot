@@ -43,7 +43,7 @@ async def resolve_reply_context(
         content = reference.inline_text
         if not content and action_client is not None:
             fetched = await _fetch_message(action_client, reference.message_id)
-            content = _render_fetched_message(fetched)
+            content = render_onebot_message(fetched)
         rendered.append(_render_reference(reference.message_id, content))
 
     return "\n".join(rendered)[:_MAX_CONTEXT_CHARS]
@@ -97,7 +97,9 @@ async def _fetch_message(action_client: ActionClient, message_id: str) -> object
         return None
 
 
-def _render_fetched_message(response: object) -> str:
+def render_onebot_message(response: object) -> str:
+    """Render a bounded text-safe preview from one OneBot message payload."""
+
     data: object = response
     if isinstance(response, Mapping):
         data = response.get("data", response)

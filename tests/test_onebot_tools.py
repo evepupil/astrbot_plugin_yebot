@@ -40,12 +40,14 @@ def runtime(
     dry_run: bool = True,
     memory_service: MemoryService | None = None,
     model_ratings_client: ModelRatingsClient | None = None,
+    event: object | None = None,
 ) -> OneBotToolRuntime:
     return OneBotToolRuntime.from_client(
         OneBotActionClient(client.call_action),
         dry_run=dry_run,
         memory_service=memory_service,
         model_ratings_client=model_ratings_client,
+        event=event,
     )
 
 
@@ -270,6 +272,105 @@ def test_member_cannot_recall_a_message() -> None:
         runtime(client).execute(
             "message.recall",
             {"message_id": 123},
+            tool_context(UserRole.MEMBER),
+        )
+    )
+
+    assert result.code is ToolResultCode.ROLE_DENIED
+    assert client.calls == []
+
+
+def test_admin_can_read_recent_messages_for_recall_without_current_command() -> None:
+    client = FakeActionClient(
+        {
+            "get_group_msg_history": {
+                "data": {
+                    "messages": [
+                        {
+                            "message_id": 10,
+                            "time": 10,
+                            "sender": {
+                                "user_id": 90,
+                                "nickname": "较早",
+                                "role": "member",
+                            },
+                            "message": [{"type": "text", "data": {"text": "较早内容"}}],
+                        },
+                        {
+                            "message_id": 20,
+                            "time": 20,
+                            "sender": {
+                                "user_id": 91,
+                                "nickname": "目标",
+                                "role": "member",
+                            },
+                            "message": [
+                                {"type": "image", "data": {"file": "secret-url"}}
+                            ],
+                        },
+                        {
+                            "message_id": 30,
+                            "time": 30,
+                            "sender": {
+                                "user_id": 42,
+                                "nickname": "管理员",
+                                "role": "admin",
+                            },
+                            "message": [
+                                {"type": "text", "data": {"text": "撤回刚才那条"}}
+                            ],
+                        },
+                    ]
+                }
+            }
+        }
+    )
+    event = SimpleNamespace(message_obj=SimpleNamespace(raw_message={"message_id": 30}))
+
+    result = asyncio.run(
+        runtime(client, event=event).execute(
+            "message.get_recent_for_recall",
+            {"limit": 2},
+            tool_context(UserRole.GROUP_ADMIN),
+        )
+    )
+
+    assert result.code is ToolResultCode.SUCCESS
+    assert result.value == {
+        "group_id": "100",
+        "messages": [
+            {
+                "message_id": "20",
+                "sender": {
+                    "user_id": "91",
+                    "nickname": "目标",
+                    "card": "",
+                    "role": "member",
+                },
+                "content": "[图片]",
+            },
+            {
+                "message_id": "10",
+                "sender": {
+                    "user_id": "90",
+                    "nickname": "较早",
+                    "card": "",
+                    "role": "member",
+                },
+                "content": "较早内容",
+            },
+        ],
+    }
+    assert client.calls == [("get_group_msg_history", {"group_id": 100, "count": 20})]
+
+
+def test_member_cannot_read_recent_messages_for_recall() -> None:
+    client = FakeActionClient({})
+
+    result = asyncio.run(
+        runtime(client).execute(
+            "message.get_recent_for_recall",
+            {"limit": 2},
             tool_context(UserRole.MEMBER),
         )
     )

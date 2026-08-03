@@ -80,6 +80,17 @@ MESSAGE_RECALL = ToolDefinition(
     risk=ToolRisk.MEDIUM,
 )
 
+MESSAGE_GET_RECENT_FOR_RECALL = ToolDefinition(
+    name="message.get_recent_for_recall",
+    description="Read bounded recent messages from the current group for recall.",
+    permission="message.recall",
+    parameters=(
+        ParameterSpec(
+            "limit", ParameterType.INTEGER, required=False, minimum=1, maximum=10
+        ),
+    ),
+)
+
 FORWARD_SCENE_SEND = ToolDefinition(
     name="message.forward_scene",
     description=(
@@ -307,6 +318,7 @@ TOOL_CATALOG: tuple[ToolDefinition, ...] = (
     GROUP_UNMUTE_MEMBER,
     MESSAGE_SEND,
     MESSAGE_RECALL,
+    MESSAGE_GET_RECENT_FOR_RECALL,
     FORWARD_SCENE_SEND,
     REMINDER_CREATE,
     REMINDER_LIST,

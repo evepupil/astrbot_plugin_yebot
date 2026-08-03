@@ -220,6 +220,7 @@ _AUTO_STICKER_SEND_STATE: ContextVar[dict[str, bool] | None] = ContextVar(
 )
 
 _DEFAULT_MUTE_DURATION_SECONDS = 60
+_RECALL_CANDIDATE_IDS_EXTRA = "yebot.recall.candidate_ids"
 
 
 _AGENT_TOOL_GUIDANCE = """\
@@ -242,10 +243,11 @@ YeBot 工具选择规则：
   权限允许时不要追加道德化拒绝、不要声称“不能乱禁言”。
 - 工具成功后，以工具返回的 `params.user_id` 和实际状态为准回复，不能再说“不知道目标”。
 - 用户要求向当前群发送指定内容时，调用 yebot_message_send；普通聊天回复不要调用它。
-- 管理员或主人回复一条群消息后要求撤回、删除或收回该条消息时，调用
-  yebot_message_recall。它只撤回当前回复的唯一消息，不能编造 message_id。
-  没有回复目标时要求用户先回复目标消息。工具会校验目标仍在当前群，权限和实际 QQ
-  管理权限交给网关与平台判断。
+- 管理员或主人要求撤回、删除或收回群消息时，优先调用 yebot_message_recall。当前消息有
+  唯一回复目标时不传 message_id；没有回复目标时，先查询最近消息。
+  根据返回的消息内容自行判断目标，再把其中的 message_id 传给撤回工具。不得编造消息 ID，
+  也不得撤回当前这条撤回指令。工具会校验目标仍在当前群，权限和实际 QQ 管理权限交给网关
+  与平台判断。
 - 只有主人明确要求创作“虚构转发对话”时，调用 yebot_forward_scene_send。当前消息中被 @ 的
   对象、名字、回复对象或指代应传为 target；nodes 必须生成 3 到 12 条自然的短对话，
   每项只有 speaker 和
@@ -1230,6 +1232,49 @@ class YeBot(Star):
         }
         return json.dumps(payload, ensure_ascii=False, default=str)
 
+    @staticmethod
+    def _cache_recall_candidate_ids(
+        event: AstrMessageEvent,
+        result: AgentRunResult,
+    ) -> None:
+        """Bind tool-returned message IDs to this event for one recall request."""
+
+        candidate_ids: set[str] = set()
+        for outcome in result.outcomes:
+            value = outcome.value
+            if not isinstance(value, ToolResult) or not isinstance(
+                value.value, Mapping
+            ):
+                continue
+            messages = value.value.get("messages")
+            if not isinstance(messages, list):
+                continue
+            for message in messages:
+                if not isinstance(message, Mapping):
+                    continue
+                message_id = normalize_id(message.get("message_id"))
+                if message_id.isdecimal():
+                    candidate_ids.add(message_id)
+        set_extra = getattr(event, "set_extra", None)
+        if callable(set_extra):
+            set_extra(_RECALL_CANDIDATE_IDS_EXTRA, tuple(sorted(candidate_ids)))
+
+    @staticmethod
+    def _recall_candidate_ids(event: AstrMessageEvent) -> frozenset[str]:
+        """Return the current event's tool-proven recall targets only."""
+
+        get_extra = getattr(event, "get_extra", None)
+        values = (
+            get_extra(_RECALL_CANDIDATE_IDS_EXTRA, ()) if callable(get_extra) else ()
+        )
+        if not isinstance(values, (list, tuple, set, frozenset)):
+            return frozenset()
+        return frozenset(
+            message_id
+            for value in values
+            if (message_id := normalize_id(value)).isdecimal()
+        )
+
     @filter.llm_tool(name="yebot_group_get_members")
     async def llm_group_get_members(self, event: AstrMessageEvent) -> str:
         """读取当前群成员。"""
@@ -1253,6 +1298,25 @@ class YeBot(Star):
             "group.get_recent_speakers",
             {"limit": bounded_limit},
         )
+        return self._encode_run(result)
+
+    @filter.llm_tool(name="yebot_message_get_recent_for_recall")
+    async def llm_message_get_recent_for_recall(
+        self,
+        event: AstrMessageEvent,
+        limit: float = 8,
+    ) -> str:
+        """读取当前群最近消息，供非引用式撤回自动选择目标。"""
+
+        bounded_limit: object = limit
+        if isinstance(limit, float) and limit.is_integer():
+            bounded_limit = int(limit)
+        result = await self._run_single_tool(
+            event,
+            "message.get_recent_for_recall",
+            {"limit": bounded_limit},
+        )
+        self._cache_recall_candidate_ids(event, result)
         return self._encode_run(result)
 
     @filter.llm_tool(name="yebot_group_get_random_member")
@@ -1366,22 +1430,40 @@ class YeBot(Star):
         return self._encode_run(result)
 
     @filter.llm_tool(name="yebot_message_recall")
-    async def llm_message_recall(self, event: AstrMessageEvent) -> str:
-        """撤回当前消息唯一引用的、属于当前群的一条消息。"""
+    async def llm_message_recall(
+        self,
+        event: AstrMessageEvent,
+        message_id: str = "",
+    ) -> str:
+        """撤回引用消息或本次查询到的当前群消息。"""
 
         references = extract_reply_references(event)
-        if len(references) != 1 or not references[0].message_id.isdecimal():
+        if len(references) == 1 and references[0].message_id.isdecimal():
+            resolved_message_id = references[0].message_id
+        elif references:
             return json.dumps(
                 {
                     "status": "failed",
-                    "summary": "请先回复要撤回的那条群消息，再提出撤回请求。",
+                    "summary": "一次只能引用一条要撤回的群消息。",
                 },
                 ensure_ascii=False,
             )
+        else:
+            resolved_message_id = normalize_id(message_id)
+            if resolved_message_id not in self._recall_candidate_ids(event):
+                return json.dumps(
+                    {
+                        "status": "failed",
+                        "summary": (
+                            "请先回复要撤回的消息，或先查询最近消息后从查询结果选择目标。"
+                        ),
+                    },
+                    ensure_ascii=False,
+                )
         result = await self._run_single_tool(
             event,
             "message.recall",
-            {"message_id": int(references[0].message_id)},
+            {"message_id": int(resolved_message_id)},
         )
         return self._encode_run(result)
 

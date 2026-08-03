@@ -19,6 +19,7 @@ from ..jobs import Job, JobScheduler
 from ..memory import MemoryService
 from ..model_ratings import ModelRatingsClient
 from ..release import RuntimeMetrics
+from ..replies import render_onebot_message
 from ..stickers import NativeStickerClient, StickerService, StickerStore
 from .catalog import (
     FILE_READ,
@@ -32,6 +33,7 @@ from .catalog import (
     MEMORY_FORGET,
     MEMORY_RECALL,
     MEMORY_REMEMBER,
+    MESSAGE_GET_RECENT_FOR_RECALL,
     MESSAGE_RECALL,
     MESSAGE_SEND,
     MODEL_RATINGS,
@@ -131,6 +133,10 @@ class OneBotToolRuntime:
         registry.register(GROUP_UNMUTE_MEMBER, handlers.unmute_member)
         registry.register(MESSAGE_SEND, handlers.send_message)
         registry.register(MESSAGE_RECALL, handlers.recall_message)
+        registry.register(
+            MESSAGE_GET_RECENT_FOR_RECALL,
+            handlers.get_recent_messages_for_recall,
+        )
         registry.register(FORWARD_SCENE_SEND, handlers.send_forward_scene)
         if scheduler is not None:
             registry.register(REMINDER_CREATE, handlers.create_reminder)
@@ -275,6 +281,43 @@ class _OneBotHandlers:
             "speaker_count": len(speakers),
             "speakers": speakers,
         }
+
+    async def get_recent_messages_for_recall(
+        self,
+        context: ToolContext,
+        arguments: Mapping[str, object],
+    ) -> object:
+        group_id = _numeric_id(context.target_group_id, "group_id")
+        limit = arguments.get("limit", 8)
+        if not isinstance(limit, int) or isinstance(limit, bool):
+            raise ValueError("limit must be an integer")
+        response = await self._client.call_action(
+            "get_group_msg_history",
+            group_id=group_id,
+            count=max(20, min(limit * 3, 50)),
+        )
+        current_message_id = _event_message_id(self._event)
+        recent: list[dict[str, object]] = []
+        seen: set[str] = set()
+        for message in _order_recent_messages(_extract_message_list(response)):
+            message_id = normalize_id(message.get("message_id"))
+            if (
+                not message_id.isdecimal()
+                or message_id == current_message_id
+                or message_id in seen
+            ):
+                continue
+            seen.add(message_id)
+            recent.append(
+                {
+                    "message_id": message_id,
+                    "sender": _message_speaker(message),
+                    "content": render_onebot_message(message)[:240],
+                }
+            )
+            if len(recent) >= limit:
+                break
+        return {"group_id": str(group_id), "messages": recent}
 
     async def get_random_member(
         self,
@@ -838,6 +881,16 @@ def _message_speaker(message: Mapping[str, object]) -> dict[str, str]:
 def _message_time(message: Mapping[str, object]) -> float:
     value = message.get("time")
     return float(value) if isinstance(value, (int, float)) else 0.0
+
+
+def _event_message_id(event: object | None) -> str:
+    message_obj = getattr(event, "message_obj", None)
+    raw_event = getattr(message_obj, "raw_message", None)
+    if isinstance(raw_event, Mapping):
+        raw_message_id = normalize_id(raw_event.get("message_id"))
+        if raw_message_id:
+            return raw_message_id
+    return normalize_id(getattr(message_obj, "message_id", None))
 
 
 def _member_role(response: object) -> str:

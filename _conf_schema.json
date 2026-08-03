@@ -20,6 +20,28 @@
     "description": "开启后读取工具正常执行，发消息、踢人和禁言只返回预览，不调用写入型 OneBot action。",
     "default": true
   },
+  "model_ratings_enabled": {
+    "type": "bool",
+    "title": "启用模型排行榜",
+    "description": "启用只读的 Codex Radar 模型评分查询工具。",
+    "default": true
+  },
+  "model_ratings_timeout_seconds": {
+    "type": "float",
+    "title": "模型排行榜请求超时（秒）",
+    "description": "单次 Codex Radar 公共接口请求的最长等待时间。",
+    "default": 8,
+    "minimum": 1,
+    "maximum": 30
+  },
+  "model_ratings_cache_seconds": {
+    "type": "int",
+    "title": "模型排行榜缓存（秒）",
+    "description": "排行榜数据在本地复用的时间；网站公开数据约每几分钟更新。",
+    "default": 300,
+    "minimum": 0,
+    "maximum": 3600
+  },
   "confirmation_ttl_seconds": {
     "type": "int",
     "title": "踢人确认有效期（秒）",

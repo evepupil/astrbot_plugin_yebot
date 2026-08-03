@@ -17,6 +17,7 @@ from ..forwarding import build_forward_scene
 from ..guardrails import GuardrailManager
 from ..jobs import Job, JobScheduler
 from ..memory import MemoryService
+from ..model_ratings import ModelRatingsClient
 from ..release import RuntimeMetrics
 from ..stickers import NativeStickerClient, StickerService, StickerStore
 from .catalog import (
@@ -32,6 +33,7 @@ from .catalog import (
     MEMORY_RECALL,
     MEMORY_REMEMBER,
     MESSAGE_SEND,
+    MODEL_RATINGS,
     REMINDER_CANCEL,
     REMINDER_CREATE,
     REMINDER_LIST,
@@ -98,6 +100,7 @@ class OneBotToolRuntime:
         metrics: RuntimeMetrics | None = None,
         sticker_store: StickerStore | None = None,
         memory_service: MemoryService | None = None,
+        model_ratings_client: ModelRatingsClient | None = None,
         event: object | None = None,
     ) -> OneBotToolRuntime:
         registry = ToolRegistry()
@@ -116,6 +119,7 @@ class OneBotToolRuntime:
                 else None
             ),
             memory_service=memory_service,
+            model_ratings_client=model_ratings_client,
             event=event,
         )
         registry.register(GROUP_GET_MEMBERS, handlers.get_members)
@@ -142,6 +146,8 @@ class OneBotToolRuntime:
             registry.register(MEMORY_REMEMBER, handlers.remember_memory)
             registry.register(MEMORY_RECALL, handlers.recall_memory)
             registry.register(MEMORY_FORGET, handlers.forget_memory)
+        if handlers.model_ratings_client is not None:
+            registry.register(MODEL_RATINGS, handlers.get_model_ratings)
         return cls(ToolGateway(registry, guardrails=guardrails, metrics=metrics))
 
     @classmethod
@@ -157,6 +163,7 @@ class OneBotToolRuntime:
         metrics: RuntimeMetrics | None = None,
         sticker_store: StickerStore | None = None,
         memory_service: MemoryService | None = None,
+        model_ratings_client: ModelRatingsClient | None = None,
     ) -> OneBotToolRuntime | None:
         client = resolve_event_action_client(event)
         if client is None:
@@ -171,6 +178,7 @@ class OneBotToolRuntime:
             metrics=metrics,
             sticker_store=sticker_store,
             memory_service=memory_service,
+            model_ratings_client=model_ratings_client,
             event=event,
         )
 
@@ -203,6 +211,7 @@ class _OneBotHandlers:
         protect_target_roles: bool,
         sticker_service: StickerService | None,
         memory_service: MemoryService | None,
+        model_ratings_client: ModelRatingsClient | None,
         event: object | None,
     ) -> None:
         self._client = client
@@ -212,6 +221,7 @@ class _OneBotHandlers:
         self._protect_target_roles = protect_target_roles
         self.sticker_service = sticker_service
         self.memory_service = memory_service
+        self.model_ratings_client = model_ratings_client
         self._event = event
 
     async def get_members(
@@ -505,6 +515,33 @@ class _OneBotHandlers:
             "truncated": len(data) >= limit,
             "text": data.decode("utf-8", errors="replace"),
         }
+
+    async def get_model_ratings(
+        self,
+        context: ToolContext,
+        arguments: Mapping[str, object],
+    ) -> object:
+        del context
+        if self.model_ratings_client is None:
+            raise RuntimeError("model ratings service unavailable")
+        query = arguments.get("query", "")
+        limit = arguments.get("limit", 10)
+        include_history = arguments.get("include_history", False)
+        history_days = arguments.get("history_days", 7)
+        if not isinstance(query, str):
+            raise ValueError("query must be a string")
+        if not isinstance(limit, int) or isinstance(limit, bool):
+            raise ValueError("limit must be an integer")
+        if not isinstance(include_history, bool):
+            raise ValueError("include_history must be a boolean")
+        if not isinstance(history_days, int) or isinstance(history_days, bool):
+            raise ValueError("history_days must be an integer")
+        return await self.model_ratings_client.query(
+            query=query,
+            limit=limit,
+            include_history=include_history,
+            history_days=history_days,
+        )
 
     async def consider_sticker(
         self,

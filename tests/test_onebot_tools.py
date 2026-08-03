@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 from yebot.domain.identity import Identity, UserRole
 from yebot.runtime.memory import MemoryService, SQLiteMemoryStore
+from yebot.runtime.model_ratings import ModelRatingsClient
 from yebot.runtime.tools import ToolContext, ToolResultCode
 from yebot.runtime.tools.onebot import (
     OneBotActionClient,
@@ -36,11 +37,13 @@ def runtime(
     *,
     dry_run: bool = True,
     memory_service: MemoryService | None = None,
+    model_ratings_client: ModelRatingsClient | None = None,
 ) -> OneBotToolRuntime:
     return OneBotToolRuntime.from_client(
         OneBotActionClient(client.call_action),
         dry_run=dry_run,
         memory_service=memory_service,
+        model_ratings_client=model_ratings_client,
     )
 
 
@@ -440,6 +443,49 @@ def test_web_fetch_rejects_local_targets() -> None:
         except ValueError:
             continue
         raise AssertionError(f"local URL was accepted: {value}")
+
+
+def test_model_ratings_is_a_public_read_only_tool() -> None:
+    client = FakeActionClient({})
+    ratings = ModelRatingsClient(
+        loader=lambda: {
+            "ok": True,
+            "day": "2026-08-03",
+            "timezone": "Asia/Shanghai",
+            "refresh_seconds": 300,
+            "updated_at": "2026-08-03T14:19:07.363Z",
+            "window": "rolling_24h",
+            "window_hours": 24,
+            "since": "2026-08-02T14:19:07.108Z",
+            "until": "2026-08-03T14:19:07.108Z",
+            "source": "public_cache",
+            "models": [
+                {
+                    "id": "deepseek-v4-flash-max",
+                    "label": "DeepSeek V4 Flash max",
+                    "group": "DeepSeek V4 Flash",
+                    "average": 9.1,
+                    "count": 149,
+                }
+            ],
+            "history": [],
+        }
+    )
+
+    result = asyncio.run(
+        runtime(client, model_ratings_client=ratings).execute(
+            "model.ratings",
+            {"query": "deepseek", "limit": 5},
+            tool_context(UserRole.MEMBER, group_id=""),
+        )
+    )
+
+    assert result.code is ToolResultCode.SUCCESS
+    assert result.value["returned_count"] == 1  # type: ignore[index]
+    assert result.value["models"][0]["label"] == (  # type: ignore[index]
+        "DeepSeek V4 Flash max"
+    )
+    assert client.calls == []
 
 
 def test_live_group_admin_cannot_mute_another_admin() -> None:

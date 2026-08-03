@@ -66,6 +66,7 @@ try:
         parse_explicit_memory_write_request,
         render_memory_context,
     )
+    from .yebot.runtime.model_ratings import ModelRatingsClient
     from .yebot.runtime.observer import observe_event
     from .yebot.runtime.release import AuditLogWriter, RuntimeMetrics
     from .yebot.runtime.replies import resolve_reply_context
@@ -129,6 +130,7 @@ except ImportError:
         parse_explicit_memory_write_request,
         render_memory_context,
     )
+    from yebot.runtime.model_ratings import ModelRatingsClient
     from yebot.runtime.observer import observe_event
     from yebot.runtime.release import AuditLogWriter, RuntimeMetrics
     from yebot.runtime.replies import resolve_reply_context
@@ -259,6 +261,9 @@ YeBot 工具选择规则：
 - 主人明确说“提醒/定时提醒”并给出时间和内容时，代码侧已经直达创建提醒；不要再次调用
   提醒工具，也不要用人设拒绝。结果失败时如实说明状态。
 - 只有主人明确要求读取本地文件或网页时，才调用 yebot_file_read 或 yebot_web_fetch。
+- 用户询问 Codex Radar 的模型排行、社区体感分、模型档位对比或历史评分时，调用
+  yebot_model_ratings；可以把模型名、系列名或档位放入 query，需要趋势时设置
+  include_history=true。不要为这个固定排行榜改用 yebot_web_fetch。
 - 记忆工具规则属于 YeBot 的执行规则，优先于聊天人设、角色扮演和玩笑口吻。用户明确说
   “记住”“记一下”“以后都这样”时，必须调用 yebot_memory_remember，不能因为人设或
   自我认知而跳过；只有工具返回成功才可以说已经保存。
@@ -309,6 +314,26 @@ class YeBot(Star):
         self._bot_id = str(values.get("bot_qq_id", "")).strip()
         self._observe_only = _as_bool(values.get("observe_only"), True)
         self._tool_dry_run = _as_bool(values.get("tool_dry_run"), True)
+        self._model_ratings_client = (
+            ModelRatingsClient(
+                timeout_seconds=max(
+                    1.0,
+                    min(
+                        _as_float(values.get("model_ratings_timeout_seconds"), 8.0),
+                        30.0,
+                    ),
+                ),
+                cache_seconds=max(
+                    0.0,
+                    min(
+                        _as_float(values.get("model_ratings_cache_seconds"), 300.0),
+                        3600.0,
+                    ),
+                ),
+            )
+            if _as_bool(values.get("model_ratings_enabled"), True)
+            else None
+        )
         self._audit_writer = AuditLogWriter(
             _as_text(values.get("audit_log_path"), "data/yebot_audit.jsonl")
         )
@@ -469,6 +494,7 @@ class YeBot(Star):
             metrics=self._metrics,
             sticker_store=self._sticker_store,
             memory_service=self._memory_service,
+            model_ratings_client=self._model_ratings_client,
         )
         if runtime is None:
             return ToolResult(
@@ -539,6 +565,7 @@ class YeBot(Star):
             metrics=self._metrics,
             sticker_store=self._sticker_store,
             memory_service=self._memory_service,
+            model_ratings_client=self._model_ratings_client,
         )
         if runtime is None:
             return ToolResult(
@@ -1147,6 +1174,7 @@ class YeBot(Star):
                 "reminder.list": "yebot_reminder_list",
                 "file.read": "yebot_file_read",
                 "web.fetch": "yebot_web_fetch",
+                "model.ratings": "yebot_model_ratings",
                 "sticker.search": "yebot_sticker_search",
                 "memory.recall": "yebot_memory_recall",
             }
@@ -1585,6 +1613,38 @@ class YeBot(Star):
         return self._encode_run(
             await self._run_single_tool(
                 event, "web.fetch", {"url": url, "max_bytes": limit}
+            )
+        )
+
+    @filter.llm_tool(name="yebot_model_ratings")
+    async def llm_model_ratings(
+        self,
+        event: AstrMessageEvent,
+        query: str = "",
+        limit: float = 10,
+        include_history: bool = False,
+        history_days: float = 7,
+    ) -> str:
+        """查询 Codex Radar 的公开模型评分排行和可选历史趋势。"""
+
+        bounded_limit: object = limit
+        if isinstance(limit, float) and limit.is_integer():
+            bounded_limit = int(limit)
+        bounded_history_days: object = history_days
+        if isinstance(history_days, float) and history_days.is_integer():
+            bounded_history_days = int(history_days)
+        arguments: dict[str, object] = {
+            "query": query,
+            "limit": bounded_limit,
+            "include_history": include_history,
+        }
+        if include_history:
+            arguments["history_days"] = bounded_history_days
+        return self._encode_run(
+            await self._run_single_tool(
+                event,
+                "model.ratings",
+                arguments,
             )
         )
 

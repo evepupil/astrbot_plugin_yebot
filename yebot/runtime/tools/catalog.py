@@ -165,6 +165,29 @@ WEB_FETCH = ToolDefinition(
     risk=ToolRisk.LOW,
 )
 
+MODEL_RATINGS = ToolDefinition(
+    name="model.ratings",
+    description=(
+        "Read the public Codex Radar rolling model ratings and optional history."
+    ),
+    permission="model.ratings.read",
+    parameters=(
+        ParameterSpec("query", ParameterType.STRING, required=False, max_length=100),
+        ParameterSpec(
+            "limit", ParameterType.INTEGER, required=False, minimum=1, maximum=20
+        ),
+        ParameterSpec("include_history", ParameterType.BOOLEAN, required=False),
+        ParameterSpec(
+            "history_days",
+            ParameterType.INTEGER,
+            required=False,
+            minimum=1,
+            maximum=14,
+        ),
+    ),
+    risk=ToolRisk.LOW,
+)
+
 STICKER_CONSIDER = ToolDefinition(
     name="sticker.consider",
     description=(
@@ -283,6 +306,7 @@ TOOL_CATALOG: tuple[ToolDefinition, ...] = (
     REMINDER_RESUME,
     FILE_READ,
     WEB_FETCH,
+    MODEL_RATINGS,
     STICKER_CONSIDER,
     STICKER_SEARCH,
     STICKER_SEND,

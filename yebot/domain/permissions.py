@@ -116,6 +116,9 @@ TOOL_PERMISSION_POLICIES: Final[Mapping[str, CapabilityPolicy]] = MappingProxyTy
         "web.fetch": CapabilityPolicy(
             frozenset({UserRole.OWNER}), PermissionScope.GLOBAL
         ),
+        "model.ratings.read": CapabilityPolicy(
+            frozenset(UserRole), PermissionScope.GLOBAL
+        ),
         "sticker.consider": CapabilityPolicy(
             frozenset(UserRole), PermissionScope.CURRENT_GROUP
         ),

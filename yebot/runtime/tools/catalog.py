@@ -24,6 +24,7 @@ GROUP_MUTE_MEMBER = ToolDefinition(
         ParameterSpec(
             "duration_seconds",
             ParameterType.INTEGER,
+            required=False,
             minimum=1,
             maximum=2_592_000,
         ),
@@ -43,6 +44,23 @@ GROUP_UNMUTE_MEMBER = ToolDefinition(
 GROUP_GET_MEMBERS = ToolDefinition(
     name="group.get_members",
     description="Read members of the current group.",
+    permission="group.member.read",
+)
+
+GROUP_GET_RECENT_SPEAKERS = ToolDefinition(
+    name="group.get_recent_speakers",
+    description="Read recent distinct speakers in the current group.",
+    permission="group.member.read",
+    parameters=(
+        ParameterSpec(
+            "limit", ParameterType.INTEGER, required=False, minimum=1, maximum=20
+        ),
+    ),
+)
+
+GROUP_GET_RANDOM_MEMBER = ToolDefinition(
+    name="group.get_random_member",
+    description="Select one random ordinary member from the current group.",
     permission="group.member.read",
 )
 

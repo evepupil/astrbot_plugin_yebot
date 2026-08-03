@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import ipaddress
+import secrets
 import socket
 from collections.abc import Awaitable, Mapping
 from pathlib import Path
@@ -20,6 +21,8 @@ from ..stickers import NativeStickerClient, StickerService, StickerStore
 from .catalog import (
     FILE_READ,
     GROUP_GET_MEMBERS,
+    GROUP_GET_RANDOM_MEMBER,
+    GROUP_GET_RECENT_SPEAKERS,
     GROUP_KICK_MEMBER,
     GROUP_MUTE_MEMBER,
     GROUP_UNMUTE_MEMBER,
@@ -114,6 +117,8 @@ class OneBotToolRuntime:
             event=event,
         )
         registry.register(GROUP_GET_MEMBERS, handlers.get_members)
+        registry.register(GROUP_GET_RECENT_SPEAKERS, handlers.get_recent_speakers)
+        registry.register(GROUP_GET_RANDOM_MEMBER, handlers.get_random_member)
         registry.register(GROUP_KICK_MEMBER, handlers.kick_member)
         registry.register(GROUP_MUTE_MEMBER, handlers.mute_member)
         registry.register(GROUP_UNMUTE_MEMBER, handlers.unmute_member)
@@ -224,6 +229,69 @@ class _OneBotHandlers:
             "members": [_sanitize_member(member) for member in members],
         }
 
+    async def get_recent_speakers(
+        self,
+        context: ToolContext,
+        arguments: Mapping[str, object],
+    ) -> object:
+        group_id = _numeric_id(context.target_group_id, "group_id")
+        limit = arguments.get("limit", 5)
+        if not isinstance(limit, int) or isinstance(limit, bool):
+            raise ValueError("limit must be an integer")
+        response = await self._client.call_action(
+            "get_group_msg_history",
+            group_id=group_id,
+            count=max(20, min(limit * 8, 100)),
+        )
+        messages = _extract_message_list(response)
+        speakers: list[dict[str, str]] = []
+        seen: set[str] = set()
+        for message in _order_recent_messages(messages):
+            speaker = _message_speaker(message)
+            user_id = speaker.get("user_id", "")
+            if not user_id or user_id in seen:
+                continue
+            seen.add(user_id)
+            speakers.append(speaker)
+            if len(speakers) >= limit:
+                break
+        return {
+            "group_id": str(group_id),
+            "speaker_count": len(speakers),
+            "speakers": speakers,
+        }
+
+    async def get_random_member(
+        self,
+        context: ToolContext,
+        arguments: Mapping[str, object],
+    ) -> object:
+        del arguments
+        group_id = _numeric_id(context.target_group_id, "group_id")
+        response = await self._client.call_action(
+            "get_group_member_list",
+            group_id=group_id,
+        )
+        members = _extract_member_list(response)
+        protected = {
+            normalize_id(context.identity.user_id),
+            *(normalize_id(value) for value in context.protected_target_ids),
+        }
+        ordinary = [
+            member
+            for member in members
+            if normalize_id(member.get("user_id")) not in protected
+            and _safe_text(member.get("role")).lower() not in {"owner", "admin"}
+        ]
+        if not ordinary:
+            raise ValueError("no eligible ordinary member")
+        selected = secrets.choice(ordinary)
+        return {
+            "group_id": str(group_id),
+            "selection": "random",
+            "member": _sanitize_member(selected),
+        }
+
     async def kick_member(
         self,
         context: ToolContext,
@@ -242,7 +310,7 @@ class _OneBotHandlers:
     ) -> object:
         group_id = _numeric_id(context.target_group_id, "group_id")
         user_id = _numeric_id(arguments["user_id"], "user_id")
-        duration = arguments["duration_seconds"]
+        duration = arguments.get("duration_seconds", 60)
         if not isinstance(duration, int) or isinstance(duration, bool):
             raise ValueError("duration_seconds must be an integer")
         params: dict[str, object] = {
@@ -611,6 +679,44 @@ def _extract_member_list(response: object) -> list[Mapping[str, object]]:
     if not isinstance(candidate, list):
         raise ValueError("OneBot returned no member list")
     return [item for item in candidate if isinstance(item, Mapping)]
+
+
+def _extract_message_list(response: object) -> list[Mapping[str, object]]:
+    candidate: object = response
+    if isinstance(response, Mapping):
+        data = response.get("data")
+        if isinstance(data, list):
+            candidate = data
+        elif isinstance(data, Mapping):
+            candidate = data.get("messages")
+        else:
+            candidate = response.get("messages")
+    if not isinstance(candidate, list):
+        raise ValueError("OneBot returned no message history")
+    return [item for item in candidate if isinstance(item, Mapping)]
+
+
+def _order_recent_messages(
+    messages: list[Mapping[str, object]],
+) -> list[Mapping[str, object]]:
+    if not any(isinstance(item.get("time"), (int, float)) for item in messages):
+        return messages
+    return sorted(
+        messages,
+        key=_message_time,
+        reverse=True,
+    )
+
+
+def _message_speaker(message: Mapping[str, object]) -> dict[str, str]:
+    sender = message.get("sender")
+    sender_map = sender if isinstance(sender, Mapping) else message
+    return _sanitize_member(sender_map)
+
+
+def _message_time(message: Mapping[str, object]) -> float:
+    value = message.get("time")
+    return float(value) if isinstance(value, (int, float)) else 0.0
 
 
 def _member_role(response: object) -> str:

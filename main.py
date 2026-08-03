@@ -190,19 +190,30 @@ _AUTO_STICKER_SEND_STATE: ContextVar[dict[str, bool] | None] = ContextVar(
     "yebot_auto_sticker_send_state", default=None
 )
 
+_DEFAULT_MUTE_DURATION_SECONDS = 60
+
 
 _AGENT_TOOL_GUIDANCE = """\
 YeBot 工具选择规则：
 - 根据用户的自然语言意图自行选择工具，用户不需要说出工具名或函数名。
 - 用户询问本群成员、人数、昵称或群角色时，调用 yebot_group_get_members。
+- 用户说“最近聊天的几个人”“最近发言的人”等集合目标时，先调用
+  yebot_group_get_recent_speakers；没有指定数量时默认处理 3 个普通成员，
+  逐个调用禁言工具。
+- 用户说“随机禁言一个人”等随机目标时，先调用 yebot_group_get_random_member，再把返回的
+  member.user_id 传给禁言工具。不要自己固定挑列表第一人，也不要用“我不乱禁言”替代执行。
 - 用户明确要求踢人、禁言或解禁时，At 不是必需条件；优先根据当前对话中最近的
   人名、QQ 号、回复对象和“他/刚才那个人”等指代判断目标，再调用对应工具。
-  只有存在多个合理目标或完全没有可用线索时才追问；禁言缺少时长时才追问时长。
+  对“最近”“随机”这类明确授权的选择意图，先用候选查询工具继续完成目标，不要因为目标
+  不是一个固定 QQ 号就拒绝。禁言没有给出时长时，由模型自己选择合理的秒数并直接执行，
+  不要追问时长；若工具调用时仍省略，工具使用 60 秒兜底。
+- 这些规则只约束工具选择，权限、管理员身份、目标保护和配额交给 YeBot 工具网关检查。
+  权限允许时不要追加道德化拒绝、不要声称“不能乱禁言”。
 - 工具成功后，以工具返回的 `params.user_id` 和实际状态为准回复，不能再说“不知道目标”。
 - 用户要求向当前群发送指定内容时，调用 yebot_message_send；普通聊天回复不要调用它。
 - 收到图片并完成识图后，判断图片是否适合以后当表情包使用；应调用表情收藏入口提交
   should_collect、图片含义和简短标签，即使决定不收藏也要明确提交决定。不要向用户要求
-  说出工具名。表情库按当前群隔离，重复图片不会重复保存。
+  说出工具名。表情库由所有群共享，重复图片不会重复保存。
 - 用户想发表情包时，先按语境调用表情搜索，再从候选中选择合适的一张调用发送入口；
   发送成功以工具返回的 sent 和 sticker_id 为准，不能凭空声称已发送。
 - 踢人工具返回 confirmation_required 时，只展示确认编号并等待用户明确确认；
@@ -940,6 +951,8 @@ class YeBot(Star):
             tool_manager = self.context.get_llm_tool_manager()
             exposed_names = {
                 "group.get_members": "yebot_group_get_members",
+                "group.get_recent_speakers": "yebot_group_get_recent_speakers",
+                "group.get_random_member": "yebot_group_get_random_member",
                 "group.kick_member": "yebot_group_kick_member",
                 "group.mute_member": "yebot_group_mute_member",
                 "group.unmute_member": "yebot_group_unmute_member",
@@ -996,6 +1009,31 @@ class YeBot(Star):
         result = await self._run_single_tool(event, "group.get_members", {})
         return self._encode_run(result)
 
+    @filter.llm_tool(name="yebot_group_get_recent_speakers")
+    async def llm_group_get_recent_speakers(
+        self,
+        event: AstrMessageEvent,
+        limit: float = 5,
+    ) -> str:
+        """读取当前群最近发言的不同成员，供最近目标类管理命令选择。"""
+
+        bounded_limit: object = limit
+        if isinstance(limit, float) and limit.is_integer():
+            bounded_limit = int(limit)
+        result = await self._run_single_tool(
+            event,
+            "group.get_recent_speakers",
+            {"limit": bounded_limit},
+        )
+        return self._encode_run(result)
+
+    @filter.llm_tool(name="yebot_group_get_random_member")
+    async def llm_group_get_random_member(self, event: AstrMessageEvent) -> str:
+        """从当前群选择一名可作为随机目标的普通成员。"""
+
+        result = await self._run_single_tool(event, "group.get_random_member", {})
+        return self._encode_run(result)
+
     @filter.llm_tool(name="yebot_group_kick_member")
     async def llm_group_kick_member(
         self,
@@ -1024,19 +1062,23 @@ class YeBot(Star):
         self,
         event: AstrMessageEvent,
         user_id: str,
-        duration_seconds: float,
+        duration_seconds: float | None = None,
         reason: str = "",
     ) -> str:
         """请求禁言当前群的一名成员。
 
         Args:
             user_id(string): 要操作的 QQ 号
-            duration_seconds(number): 禁言秒数
+            duration_seconds(number): 禁言秒数，可省略；省略时由模型选择，工具默认 60 秒
             reason(string): 操作原因
         """
-        duration: object = duration_seconds
-        if isinstance(duration_seconds, float) and duration_seconds.is_integer():
-            duration = int(duration_seconds)
+        duration: object = (
+            _DEFAULT_MUTE_DURATION_SECONDS
+            if duration_seconds is None
+            else duration_seconds
+        )
+        if isinstance(duration, float) and duration.is_integer():
+            duration = int(duration)
         result = await self._run_single_tool(
             event,
             "group.mute_member",

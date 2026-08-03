@@ -4,6 +4,8 @@ from ..guardrails import GuardrailManager
 from .catalog import (
     FILE_READ,
     GROUP_GET_MEMBERS,
+    GROUP_GET_RANDOM_MEMBER,
+    GROUP_GET_RECENT_SPEAKERS,
     GROUP_KICK_MEMBER,
     GROUP_MUTE_MEMBER,
     GROUP_UNMUTE_MEMBER,
@@ -41,6 +43,8 @@ __all__ = [
     "ParameterSpec",
     "ParameterType",
     "GROUP_GET_MEMBERS",
+    "GROUP_GET_RECENT_SPEAKERS",
+    "GROUP_GET_RANDOM_MEMBER",
     "GROUP_KICK_MEMBER",
     "GROUP_MUTE_MEMBER",
     "GROUP_UNMUTE_MEMBER",

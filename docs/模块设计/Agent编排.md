@@ -4,7 +4,7 @@
 - 对应代码：`yebot/runtime/agents/`、`main.py`
 - 所属里程碑：[M5](../roadmap.md#m5)
 - 当前状态：进行中
-- 最近更新时间：2026-08-02
+- 最近更新时间：2026-08-03
 
 ## 职责与边界
 
@@ -29,7 +29,7 @@ AstrBot 主 Agent/function tool
 ## 关键决策
 
 - AstrBot 的 LLM function tool 只负责提供模型入口；每次调用先创建路由和计划，再进入 `YeBot.execute_tool`。
-- `on_llm_request` 在请求包含 YeBot 工具时追加稳定的工具选择规则，并在开启配置时召回当前可见的少量记忆；主 Agent 根据自然语言意图自动选择工具，普通闲聊不会触发记忆写入。
+- `on_llm_request` 在请求包含 YeBot 工具时追加稳定的工具选择规则，并在开启配置时召回当前可见的少量记忆；主 Agent 根据自然语言意图自动选择工具，普通闲聊不会触发记忆写入。群管理意图中，“最近聊天”先查最近发言人，“随机”先查随机普通成员，再逐个调用禁言；未提供禁言时长时由模型自行选择，工具层提供 60 秒兜底。
 - 路由必须携带固定原因，例如 `explicit_tool_request`、`explicit_subagent_request`、`bot_not_mentioned`，便于日志和后续审计。
 - 默认预算为最多 6 步、并发 1、总超时 30 秒，可在插件配置中调整；达到步骤上限后不再执行剩余步骤。
 - 单步异常只返回异常类型，编排器停止后续步骤并汇总失败原因，不把平台异常正文交给模型。
@@ -42,6 +42,8 @@ AstrBot 主 Agent/function tool
 `main.py` 已通过 `@filter.llm_tool` 暴露以下 AstrBot 工具，并通过 `@filter.on_llm_request` 提供自然语言工具选择规则：
 
 - `yebot_group_get_members`
+- `yebot_group_get_recent_speakers`
+- `yebot_group_get_random_member`
 - `yebot_group_kick_member`
 - `yebot_group_mute_member`
 - `yebot_group_unmute_member`
@@ -77,3 +79,4 @@ AstrBot 主 Agent/function tool
 - 2026-08-01：接入 AstrBot function tools 与受限 `yebot_delegate`。
 - 2026-08-02：接入确认、提醒、文件/网页只读工具，并更新容器注册验收。
 - 2026-08-02：接入 M9 记忆自动召回与记住/回忆/忘记工具。
+- 2026-08-03：修正群管理意图提示，增加最近/随机目标查询和禁言时长省略规则。

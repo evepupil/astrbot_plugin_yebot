@@ -74,6 +74,86 @@ def test_get_members_calls_onebot_and_sanitizes_result() -> None:
     assert client.calls == [("get_group_member_list", {"group_id": 100})]
 
 
+def test_get_recent_speakers_reads_distinct_members_from_history() -> None:
+    client = FakeActionClient(
+        {
+            "get_group_msg_history": {
+                "data": {
+                    "messages": [
+                        {
+                            "time": 10,
+                            "sender": {
+                                "user_id": "11",
+                                "nickname": "older",
+                                "role": "member",
+                            },
+                        },
+                        {
+                            "time": 30,
+                            "sender": {
+                                "user_id": "22",
+                                "nickname": "newer",
+                                "role": "member",
+                            },
+                        },
+                        {
+                            "time": 20,
+                            "sender": {
+                                "user_id": "11",
+                                "nickname": "older",
+                                "role": "member",
+                            },
+                        },
+                    ]
+                }
+            }
+        }
+    )
+
+    result = asyncio.run(
+        runtime(client).execute(
+            "group.get_recent_speakers",
+            {"limit": 2},
+            tool_context(UserRole.GROUP_ADMIN),
+        )
+    )
+
+    assert result.code is ToolResultCode.SUCCESS
+    assert result.value == {
+        "group_id": "100",
+        "speaker_count": 2,
+        "speakers": [
+            {"user_id": "22", "nickname": "newer", "card": "", "role": "member"},
+            {"user_id": "11", "nickname": "older", "card": "", "role": "member"},
+        ],
+    }
+    assert client.calls == [("get_group_msg_history", {"group_id": 100, "count": 20})]
+
+
+def test_get_random_member_excludes_protected_and_admin_members() -> None:
+    client = FakeActionClient(
+        {
+            "get_group_member_list": [
+                {"user_id": "1592829658", "nickname": "bot", "role": "member"},
+                {"user_id": "42", "nickname": "actor", "role": "admin"},
+                {"user_id": "88", "nickname": "owner", "role": "owner"},
+                {"user_id": "99", "nickname": "eligible", "role": "member"},
+            ]
+        }
+    )
+    context = ToolContext(
+        Identity("42", "100", UserRole.GROUP_ADMIN, "admin"),
+        protected_target_ids=("1592829658", "88"),
+    )
+
+    result = asyncio.run(
+        runtime(client).execute("group.get_random_member", {}, context)
+    )
+
+    assert result.code is ToolResultCode.SUCCESS
+    assert result.value["member"]["user_id"] == "99"  # type: ignore[index]
+
+
 def test_memory_tools_use_the_same_gateway_and_scope_policy(tmp_path: Path) -> None:
     service = MemoryService(SQLiteMemoryStore(tmp_path / "memory.db"))
     client = FakeActionClient({})
@@ -145,6 +225,26 @@ def test_admin_mutation_is_dry_run_by_default() -> None:
         runtime(client).execute(
             "group.mute_member",
             {"user_id": "99", "duration_seconds": 60},
+            tool_context(UserRole.GROUP_ADMIN),
+        )
+    )
+
+    assert result.code is ToolResultCode.SUCCESS
+    assert result.value == {
+        "dry_run": True,
+        "action": "set_group_ban",
+        "params": {"group_id": 100, "user_id": 99, "duration": 60},
+    }
+    assert client.calls == []
+
+
+def test_mute_uses_short_default_when_duration_is_omitted() -> None:
+    client = FakeActionClient({})
+
+    result = asyncio.run(
+        runtime(client).execute(
+            "group.mute_member",
+            {"user_id": "99"},
             tool_context(UserRole.GROUP_ADMIN),
         )
     )

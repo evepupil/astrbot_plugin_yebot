@@ -44,11 +44,11 @@ from .catalog import (
     REMINDER_PAUSE,
     REMINDER_RESUME,
     STICKER_CONSIDER,
-    STICKER_SEARCH,
-    TOKEN_CALCULATE,
     STICKER_DELETE,
     STICKER_LIST,
+    STICKER_SEARCH,
     STICKER_SEND,
+    TOKEN_CALCULATE,
     WEB_FETCH,
 )
 from .gateway import ToolGateway
@@ -104,12 +104,12 @@ class OneBotToolRuntime:
         scheduler: JobScheduler | None = None,
         file_root: str | Path | None = None,
         protect_target_roles: bool = False,
-        token_calculator: TokenCalculator | None = None,
         metrics: RuntimeMetrics | None = None,
         sticker_store: StickerStore | None = None,
+        sticker_min_auto_collect_confidence: float = 0.9,
         memory_service: MemoryService | None = None,
         model_ratings_client: ModelRatingsClient | None = None,
-        sticker_min_auto_collect_confidence: float = 0.9,
+        token_calculator: TokenCalculator | None = None,
         event: object | None = None,
     ) -> OneBotToolRuntime:
         registry = ToolRegistry()
@@ -123,14 +123,14 @@ class OneBotToolRuntime:
                 StickerService(
                     sticker_store,
                     NativeStickerClient(client.call_action) if not dry_run else None,
-            token_calculator=token_calculator,
+                    min_auto_collect_confidence=sticker_min_auto_collect_confidence,
                 )
                 if sticker_store
                 else None
-                    min_auto_collect_confidence=sticker_min_auto_collect_confidence,
             ),
             memory_service=memory_service,
             model_ratings_client=model_ratings_client,
+            token_calculator=token_calculator,
             event=event,
         )
         registry.register(GROUP_GET_MEMBERS, handlers.get_members)
@@ -156,23 +156,22 @@ class OneBotToolRuntime:
         registry.register(WEB_FETCH, handlers.fetch_web)
         if handlers.sticker_service is not None:
             registry.register(STICKER_CONSIDER, handlers.consider_sticker)
-        if handlers.token_calculator is not None:
-            registry.register(TOKEN_CALCULATE, handlers.calculate_token_cost)
             registry.register(STICKER_SEARCH, handlers.search_stickers)
             registry.register(STICKER_SEND, handlers.send_sticker)
+            registry.register(STICKER_LIST, handlers.list_stickers)
+            registry.register(STICKER_DELETE, handlers.delete_sticker)
         if handlers.memory_service is not None:
             registry.register(MEMORY_REMEMBER, handlers.remember_memory)
             registry.register(MEMORY_RECALL, handlers.recall_memory)
             registry.register(MEMORY_FORGET, handlers.forget_memory)
-            registry.register(STICKER_LIST, handlers.list_stickers)
-            registry.register(STICKER_DELETE, handlers.delete_sticker)
         if handlers.model_ratings_client is not None:
             registry.register(MODEL_RATINGS, handlers.get_model_ratings)
+        if handlers.token_calculator is not None:
+            registry.register(TOKEN_CALCULATE, handlers.calculate_token_cost)
         return cls(ToolGateway(registry, guardrails=guardrails, metrics=metrics))
 
     @classmethod
     def from_event(
-        token_calculator: TokenCalculator | None = None,
         cls,
         event: object,
         *,
@@ -183,14 +182,14 @@ class OneBotToolRuntime:
         protect_target_roles: bool = False,
         metrics: RuntimeMetrics | None = None,
         sticker_store: StickerStore | None = None,
+        sticker_min_auto_collect_confidence: float = 0.9,
         memory_service: MemoryService | None = None,
         model_ratings_client: ModelRatingsClient | None = None,
+        token_calculator: TokenCalculator | None = None,
     ) -> OneBotToolRuntime | None:
         client = resolve_event_action_client(event)
-            token_calculator=token_calculator,
         if client is None:
             return None
-        sticker_min_auto_collect_confidence: float = 0.9,
         return cls.from_client(
             client,
             dry_run=dry_run,
@@ -200,14 +199,15 @@ class OneBotToolRuntime:
             protect_target_roles=protect_target_roles,
             metrics=metrics,
             sticker_store=sticker_store,
+            sticker_min_auto_collect_confidence=sticker_min_auto_collect_confidence,
             memory_service=memory_service,
             model_ratings_client=model_ratings_client,
+            token_calculator=token_calculator,
             event=event,
         )
 
     async def execute(
         self,
-            sticker_min_auto_collect_confidence=sticker_min_auto_collect_confidence,
         tool_name: str,
         arguments: Mapping[str, object] | object,
         context: ToolContext,
@@ -220,7 +220,6 @@ class OneBotToolRuntime:
         context: ToolContext,
     ) -> ToolResult:
         return await self._gateway.confirm(confirmation_id, context)
-        token_calculator: TokenCalculator | None,
 
 
 class _OneBotHandlers:
@@ -230,7 +229,6 @@ class _OneBotHandlers:
         self,
         client: OneBotActionClient,
         *,
-        self.token_calculator = token_calculator
         dry_run: bool,
         scheduler: JobScheduler | None,
         file_root: str | Path | None,
@@ -238,6 +236,7 @@ class _OneBotHandlers:
         sticker_service: StickerService | None,
         memory_service: MemoryService | None,
         model_ratings_client: ModelRatingsClient | None,
+        token_calculator: TokenCalculator | None,
         event: object | None,
     ) -> None:
         self._client = client
@@ -248,6 +247,7 @@ class _OneBotHandlers:
         self.sticker_service = sticker_service
         self.memory_service = memory_service
         self.model_ratings_client = model_ratings_client
+        self.token_calculator = token_calculator
         self._event = event
 
     async def get_members(
@@ -605,6 +605,25 @@ class _OneBotHandlers:
         del context
         if self.model_ratings_client is None:
             raise RuntimeError("model ratings service unavailable")
+        query = arguments.get("query", "")
+        limit = arguments.get("limit", 10)
+        include_history = arguments.get("include_history", False)
+        history_days = arguments.get("history_days", 7)
+        if not isinstance(query, str):
+            raise ValueError("query must be a string")
+        if not isinstance(limit, int) or isinstance(limit, bool):
+            raise ValueError("limit must be an integer")
+        if not isinstance(include_history, bool):
+            raise ValueError("include_history must be a boolean")
+        if not isinstance(history_days, int) or isinstance(history_days, bool):
+            raise ValueError("history_days must be an integer")
+        return await self.model_ratings_client.query(
+            query=query,
+            limit=limit,
+            include_history=include_history,
+            history_days=history_days,
+        )
+
     async def calculate_token_cost(
         self,
         context: ToolContext,
@@ -633,24 +652,6 @@ class _OneBotHandlers:
             output_price=_numeric_value(output_price, "output_price"),
             cache_price=_numeric_value(cache_price, "cache_price"),
             cache_hit_rate=_numeric_value(cache_hit_rate, "cache_hit_rate"),
-        )
-        query = arguments.get("query", "")
-        limit = arguments.get("limit", 10)
-        include_history = arguments.get("include_history", False)
-        history_days = arguments.get("history_days", 7)
-        if not isinstance(query, str):
-            raise ValueError("query must be a string")
-        if not isinstance(limit, int) or isinstance(limit, bool):
-            raise ValueError("limit must be an integer")
-        if not isinstance(include_history, bool):
-            raise ValueError("include_history must be a boolean")
-        if not isinstance(history_days, int) or isinstance(history_days, bool):
-            raise ValueError("history_days must be an integer")
-        return await self.model_ratings_client.query(
-            query=query,
-            limit=limit,
-            include_history=include_history,
-            history_days=history_days,
         )
 
     async def consider_sticker(
@@ -722,6 +723,32 @@ class _OneBotHandlers:
             "result": result,
         }
 
+    async def list_stickers(
+        self,
+        context: ToolContext,
+        arguments: Mapping[str, object],
+    ) -> object:
+        del context
+        if self.sticker_service is None:
+            raise RuntimeError("sticker service unavailable")
+        limit = arguments.get("limit", 20)
+        if not isinstance(limit, int) or isinstance(limit, bool):
+            raise ValueError("limit must be an integer")
+        return self.sticker_service.list_for_review(limit)
+
+    async def delete_sticker(
+        self,
+        context: ToolContext,
+        arguments: Mapping[str, object],
+    ) -> object:
+        del context
+        if self.sticker_service is None:
+            raise RuntimeError("sticker service unavailable")
+        sticker_id = arguments["sticker_id"]
+        if not isinstance(sticker_id, str):
+            raise ValueError("sticker_id must be a string")
+        return self.sticker_service.delete(sticker_id)
+
     async def remember_memory(
         self,
         context: ToolContext,
@@ -762,32 +789,6 @@ class _OneBotHandlers:
         return {
             "memory_id": record.memory_id,
             "scope": record.scope.value,
-    async def list_stickers(
-        self,
-        context: ToolContext,
-        arguments: Mapping[str, object],
-    ) -> object:
-        del context
-        if self.sticker_service is None:
-            raise RuntimeError("sticker service unavailable")
-        limit = arguments.get("limit", 20)
-        if not isinstance(limit, int) or isinstance(limit, bool):
-            raise ValueError("limit must be an integer")
-        return self.sticker_service.list_for_review(limit)
-
-    async def delete_sticker(
-        self,
-        context: ToolContext,
-        arguments: Mapping[str, object],
-    ) -> object:
-        del context
-        if self.sticker_service is None:
-            raise RuntimeError("sticker service unavailable")
-        sticker_id = arguments["sticker_id"]
-        if not isinstance(sticker_id, str):
-            raise ValueError("sticker_id must be a string")
-        return self.sticker_service.delete(sticker_id)
-
             "topic": record.topic,
             "status": record.status.value,
         }
@@ -974,12 +975,6 @@ def _member_role(response: object) -> str:
         return ""
     role = candidate.get("role")
     return role.strip().lower() if isinstance(role, str) else ""
-def _numeric_value(value: object, label: str) -> float:
-    if not isinstance(value, (int, float)) or isinstance(value, bool):
-        raise ValueError(f"{label} must be a number")
-    return float(value)
-
-
 
 
 def _sanitize_member(member: Mapping[str, object]) -> dict[str, str]:
@@ -1052,6 +1047,12 @@ def _validate_public_url(value: str) -> None:
 
 def _is_scalar(value: object) -> bool:
     return isinstance(value, str | int | float | bool)
+
+
+def _numeric_value(value: object, label: str) -> float:
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        raise ValueError(f"{label} must be a number")
+    return float(value)
 
 
 def _safe_scalar(value: object) -> str | int | float | bool:

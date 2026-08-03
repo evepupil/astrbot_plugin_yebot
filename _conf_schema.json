@@ -118,12 +118,6 @@
     "description": "Let the restricted image agent decide whether incoming group images are reusable stickers.",
     "default": true
   },
-  "sticker_auto_send": {
-    "type": "bool",
-    "title": "Automatic sticker reactions",
-    "description": "Let the restricted sticker agent occasionally search and send one suitable saved sticker.",
-    "default": true
-  },
   "sticker_auto_collect_min_confidence": {
     "type": "float",
     "title": "Automatic sticker collection confidence",
@@ -131,6 +125,12 @@
     "default": 0.9,
     "minimum": 0.5,
     "maximum": 1
+  },
+  "sticker_auto_send": {
+    "type": "bool",
+    "title": "Automatic sticker reactions",
+    "description": "Let the restricted sticker agent occasionally search and send one suitable saved sticker.",
+    "default": true
   },
   "sticker_agent_max_steps": {
     "type": "int",

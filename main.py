@@ -145,8 +145,8 @@ except ImportError:
         StickerStore,
         extract_image_components,
     )
-    from yebot.runtime.token_calculator import TokenCalculator
     from yebot.runtime.targeting import TargetResolution, TargetResolver, TargetStatus
+    from yebot.runtime.token_calculator import TokenCalculator
     from yebot.runtime.tools import ToolContext, ToolResult, ToolResultCode
     from yebot.runtime.tools.onebot import (
         OneBotActionClient,
@@ -274,12 +274,6 @@ YeBot 工具选择规则：
   不要在同一轮自动调用 yebot_confirm_action。
 - 用户明确确认后，调用 yebot_confirm_action；确认编号只能由原操作者在原群使用一次。
 - 用户要求稍后提醒、查看提醒或管理提醒时，使用对应的 yebot_reminder_* 工具；
-- 用户询问 Token 数量、Token 用量、Token 成本、缓存命中率或预计账单时，调用
-  yebot_token_calculate。总 Token 数按百万 M 传入：1 万 Token 是 0.01，100 万 Token 是
-  1；默认使用 TokenCal 的国产 / Agent 交互场景和页面默认价格。用户明确给出国外 /
-  长上下文场景或价格时，把对应参数一并传入。它计算的是总 Token 对应的综合单价和
-  预计费用。
-  未提供的 Token 数量不要自行编造。
   普通回复不要创建任务。
 - 给某人创建提醒时，把人名、回复对象或“他”等指代放入 reminder 的 target 参数；工具会先
   解析为唯一成员，再在到期消息中 @ 该成员。
@@ -289,6 +283,12 @@ YeBot 工具选择规则：
 - 用户询问 Codex Radar 的模型排行、社区体感分、模型档位对比或历史评分时，调用
   yebot_model_ratings；可以把模型名、系列名或档位放入 query，需要趋势时设置
   include_history=true。不要为这个固定排行榜改用 yebot_web_fetch。
+- 用户询问 Token 数量、Token 用量、Token 成本、缓存命中率或预计账单时，调用
+  yebot_token_calculate。总 Token 数按百万 M 传入：1 万 Token 是 0.01，100 万 Token 是
+  1；默认使用 TokenCal 的国产 / Agent 交互场景和页面默认价格。用户明确给出国外 /
+  长上下文场景或价格时，把对应参数一并传入。它计算的是总 Token 对应的综合单价和
+  预计费用。
+  未提供的 Token 数量不要自行编造。
 - 记忆工具规则属于 YeBot 的执行规则，优先于聊天人设、角色扮演和玩笑口吻。用户明确说
   “记住”“记一下”“以后都这样”时，必须调用 yebot_memory_remember，不能因为人设或
   自我认知而跳过；只有工具返回成功才可以说已经保存。
@@ -353,11 +353,6 @@ class YeBot(Star):
                 timeout_seconds=max(
                     1.0,
                     min(
-        self._token_calculator = (
-            TokenCalculator()
-            if _as_bool(values.get("token_calculator_enabled"), True)
-            else None
-        )
                         _as_float(values.get("model_ratings_timeout_seconds"), 8.0),
                         30.0,
                     ),
@@ -371,6 +366,11 @@ class YeBot(Star):
                 ),
             )
             if _as_bool(values.get("model_ratings_enabled"), True)
+            else None
+        )
+        self._token_calculator = (
+            TokenCalculator()
+            if _as_bool(values.get("token_calculator_enabled"), True)
             else None
         )
         self._audit_writer = AuditLogWriter(
@@ -514,7 +514,6 @@ class YeBot(Star):
 
         Every Agent and function-tool adapter uses this entry point. Keeping
         identity extraction here ensures all callers use the same owner and
-            token_calculator=self._token_calculator,
         group-admin rules as message observation.
         """
 
@@ -543,8 +542,12 @@ class YeBot(Star):
             protect_target_roles=True,
             metrics=self._metrics,
             sticker_store=self._sticker_store,
+            sticker_min_auto_collect_confidence=(
+                self._sticker_collect_min_confidence
+            ),
             memory_service=self._memory_service,
             model_ratings_client=self._model_ratings_client,
+            token_calculator=self._token_calculator,
         )
         if runtime is None:
             return ToolResult(
@@ -556,9 +559,6 @@ class YeBot(Star):
         identity = parse_identity(raw_event, self._owner_ids)
         context = ToolContext(
             identity=identity,
-            sticker_min_auto_collect_confidence=(
-                self._sticker_collect_min_confidence
-            ),
             target_group_id=normalize_id(target_group_id)
             or normalize_id(raw_event.get("group_id"))
             or None,
@@ -585,7 +585,6 @@ class YeBot(Star):
             )
         return context
 
-            token_calculator=self._token_calculator,
     async def confirm_tool(
         self,
         event: AstrMessageEvent,
@@ -618,8 +617,12 @@ class YeBot(Star):
             protect_target_roles=True,
             metrics=self._metrics,
             sticker_store=self._sticker_store,
+            sticker_min_auto_collect_confidence=(
+                self._sticker_collect_min_confidence
+            ),
             memory_service=self._memory_service,
             model_ratings_client=self._model_ratings_client,
+            token_calculator=self._token_calculator,
         )
         if runtime is None:
             return ToolResult(
@@ -632,9 +635,6 @@ class YeBot(Star):
             identity=identity,
             target_group_id=normalize_id(raw_event.get("group_id")) or None,
             request_id=request_id or _request_id(event),
-            sticker_min_auto_collect_confidence=(
-                self._sticker_collect_min_confidence
-            ),
             protected_target_ids=tuple((*self._owner_ids, self._bot_id)),
         )
         return await runtime.confirm(confirmation_id, context)
@@ -838,14 +838,6 @@ class YeBot(Star):
             caption_hint = (
                 f"\nAstrBot 图片描述（仅作识图参考）：{caption}\n" if caption else ""
             )
-            _, state = await self._run_restricted_sticker_agent(
-                event,
-                prompt=collection_prompt + caption_hint,
-                image_urls=image_urls,
-                allowed_tools=("yebot_sticker_consider",),
-                mode="sticker_collect",
-            )
-            logger.info(
             collection_prompt = (
                 "Inspect every image in this group message. Classify each image as "
                 "exactly one of meme, reaction_sticker, cartoon_reaction, photo, "
@@ -861,6 +853,14 @@ class YeBot(Star):
                 "asset_kind, confidence, concise Chinese meaning, and short search "
                 "tags. Do not explain the decision to the group."
             )
+            _, state = await self._run_restricted_sticker_agent(
+                event,
+                prompt=collection_prompt + caption_hint,
+                image_urls=image_urls,
+                allowed_tools=("yebot_sticker_consider",),
+                mode="sticker_collect",
+            )
+            logger.info(
                 "YeBot automatic sticker collection finished "
                 "message=%s collected=%s caption=%s",
                 _request_id(event),
@@ -1201,7 +1201,6 @@ class YeBot(Star):
             return TargetResolution(TargetStatus.UNRESOLVED)
         identity = parse_identity(raw_event, self._owner_ids)
         return await TargetResolver(resolve_event_action_client(event)).resolve(
-                "token.calculate": "yebot_token_calculate",
             event,
             target_hint=target_hint.strip() or _current_message_text(event),
             actor_id=identity.user_id,
@@ -1249,6 +1248,7 @@ class YeBot(Star):
                 "file.read": "yebot_file_read",
                 "web.fetch": "yebot_web_fetch",
                 "model.ratings": "yebot_model_ratings",
+                "token.calculate": "yebot_token_calculate",
                 "sticker.search": "yebot_sticker_search",
                 "memory.recall": "yebot_memory_recall",
             }
@@ -1564,6 +1564,9 @@ class YeBot(Star):
         self,
         event: AstrMessageEvent,
         should_collect: bool,
+        asset_kind: str,
+        reaction_ready: bool,
+        confidence: float,
         meaning: str = "",
         tags: list[str] | None = None,
         image_index: float = 0,
@@ -1572,27 +1575,27 @@ class YeBot(Star):
 
         Args:
             should_collect(boolean): 是否收藏图片。
+            asset_kind(string): 图片分类：meme、reaction_sticker、cartoon_reaction、
+                photo、screenshot、document 或 other。
+            reaction_ready(boolean): 是否可脱离原聊天独立作为反应图使用。
             meaning(string): 图片在群聊中的含义。
             tags(list[string]): 用于检索的简短标签。
             image_index(number): 当前消息中的图片序号，从 0 开始。
             confidence(number): 模型对判断的置信度。
         """
 
-        asset_kind: str,
-        reaction_ready: bool,
-        confidence: float,
         index: object = image_index
         if isinstance(image_index, float) and image_index.is_integer():
             index = int(image_index)
         arguments: dict[str, object] = {
             "should_collect": should_collect,
+            "asset_kind": asset_kind,
+            "reaction_ready": reaction_ready,
             "meaning": meaning,
             "image_index": index,
+            "confidence": confidence,
         }
         if tags is not None:
-            asset_kind(string): 图片分类：meme、reaction_sticker、cartoon_reaction、
-                photo、screenshot、document 或 other。
-            reaction_ready(boolean): 是否可脱离原聊天独立作为反应图使用。
             arguments["tags"] = tags
         result = await self._run_single_tool(event, "sticker.consider", arguments)
         state = _AUTO_STICKER_SEND_STATE.get()
@@ -1605,11 +1608,8 @@ class YeBot(Star):
     @filter.llm_tool(name="yebot_sticker_search")
     async def llm_sticker_search(
         self,
-            "asset_kind": asset_kind,
-            "reaction_ready": reaction_ready,
         event: AstrMessageEvent,
         query: str = "",
-            "confidence": confidence,
         limit: float = 5,
     ) -> str:
         """按当前对话语境搜索当前群的表情包。
@@ -1630,22 +1630,6 @@ class YeBot(Star):
             )
         )
 
-    @filter.llm_tool(name="yebot_sticker_send")
-    async def llm_sticker_send(
-        self,
-        event: AstrMessageEvent,
-        sticker_id: str,
-    ) -> str:
-        """向当前群发送表情库中的一张图片。
-
-        Args:
-            sticker_id(string): 表情搜索结果中的稳定 ID。
-        """
-
-        state = _AUTO_STICKER_SEND_STATE.get()
-        if state is not None and state.get("sent"):
-            return json.dumps(
-                {
     @filter.llm_tool(name="yebot_sticker_list")
     async def llm_sticker_list(
         self,
@@ -1681,6 +1665,22 @@ class YeBot(Star):
             )
         )
 
+    @filter.llm_tool(name="yebot_sticker_send")
+    async def llm_sticker_send(
+        self,
+        event: AstrMessageEvent,
+        sticker_id: str,
+    ) -> str:
+        """向当前群发送表情库中的一张图片。
+
+        Args:
+            sticker_id(string): 表情搜索结果中的稳定 ID。
+        """
+
+        state = _AUTO_STICKER_SEND_STATE.get()
+        if state is not None and state.get("sent"):
+            return json.dumps(
+                {
                     "status": "failed",
                     "summary": "automatic sticker send limit reached",
                 },
@@ -1773,30 +1773,6 @@ class YeBot(Star):
         )
 
     @filter.llm_tool(name="yebot_reminder_pause")
-    @filter.llm_tool(name="yebot_token_calculate")
-    async def llm_token_calculate(
-        self,
-        event: AstrMessageEvent,
-        total_tokens_million: float,
-        scene: str = "domestic",
-        input_price: float = 1.40,
-        output_price: float = 4.40,
-        cache_price: float = 0.26,
-        cache_hit_rate: float = 92.2,
-    ) -> str:
-        """按 TokenCal 公式计算 Token 综合单价和预计费用。"""
-
-        arguments: dict[str, object] = {
-            "total_tokens_million": total_tokens_million,
-            "scene": scene,
-            "input_price": input_price,
-            "output_price": output_price,
-            "cache_price": cache_price,
-            "cache_hit_rate": cache_hit_rate,
-        }
-        return self._encode_run(
-            await self._run_single_tool(event, "token.calculate", arguments)
-        )
     async def llm_reminder_pause(
         self,
         event: AstrMessageEvent,
@@ -1886,6 +1862,31 @@ class YeBot(Star):
                 "model.ratings",
                 arguments,
             )
+        )
+
+    @filter.llm_tool(name="yebot_token_calculate")
+    async def llm_token_calculate(
+        self,
+        event: AstrMessageEvent,
+        total_tokens_million: float,
+        scene: str = "domestic",
+        input_price: float = 1.40,
+        output_price: float = 4.40,
+        cache_price: float = 0.26,
+        cache_hit_rate: float = 92.2,
+    ) -> str:
+        """按 TokenCal 公式计算 Token 综合单价和预计费用。"""
+
+        arguments: dict[str, object] = {
+            "total_tokens_million": total_tokens_million,
+            "scene": scene,
+            "input_price": input_price,
+            "output_price": output_price,
+            "cache_price": cache_price,
+            "cache_hit_rate": cache_hit_rate,
+        }
+        return self._encode_run(
+            await self._run_single_tool(event, "token.calculate", arguments)
         )
 
     @filter.llm_tool(name="yebot_memory_remember")

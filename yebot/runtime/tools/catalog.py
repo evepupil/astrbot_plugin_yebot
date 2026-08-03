@@ -206,6 +206,7 @@ MODEL_RATINGS = ToolDefinition(
     ),
     risk=ToolRisk.LOW,
 )
+
 TOKEN_CALCULATE = ToolDefinition(
     name="token.calculate",
     description=(
@@ -262,6 +263,8 @@ STICKER_CONSIDER = ToolDefinition(
     permission="sticker.consider",
     parameters=(
         ParameterSpec("should_collect", ParameterType.BOOLEAN),
+        ParameterSpec("asset_kind", ParameterType.STRING, max_length=32),
+        ParameterSpec("reaction_ready", ParameterType.BOOLEAN),
         ParameterSpec("meaning", ParameterType.STRING, required=False, max_length=500),
         ParameterSpec("tags", ParameterType.ARRAY, required=False),
         ParameterSpec(
@@ -274,7 +277,6 @@ STICKER_CONSIDER = ToolDefinition(
         ParameterSpec(
             "confidence",
             ParameterType.NUMBER,
-            required=False,
             minimum=0,
             maximum=1,
         ),
@@ -305,12 +307,32 @@ STICKER_SEND = ToolDefinition(
     risk=ToolRisk.MEDIUM,
 )
 
+STICKER_LIST = ToolDefinition(
+    name="sticker.list",
+    description="List recent YeBot stickers for owner review and cleanup.",
+    permission="sticker.manage",
+    parameters=(
+        ParameterSpec(
+            "limit", ParameterType.INTEGER, required=False, minimum=1, maximum=50
+        ),
+    ),
+    risk=ToolRisk.LOW,
+)
+
+STICKER_DELETE = ToolDefinition(
+    name="sticker.delete",
+    description="Delete one named sticker from YeBot's shared local library.",
+    permission="sticker.manage",
+    parameters=(
+        ParameterSpec("sticker_id", ParameterType.STRING, min_length=1, max_length=100),
+    ),
+    risk=ToolRisk.MEDIUM,
+)
+
 MEMORY_REMEMBER = ToolDefinition(
     name="memory.remember",
     description="Store one explicit, scoped fact or preference for later recall.",
     permission="memory.write",
-        ParameterSpec("asset_kind", ParameterType.STRING, max_length=32),
-        ParameterSpec("reaction_ready", ParameterType.BOOLEAN),
     parameters=(
         ParameterSpec("scope", ParameterType.STRING, required=False, max_length=16),
         ParameterSpec("topic", ParameterType.STRING, min_length=1, max_length=120),
@@ -320,6 +342,7 @@ MEMORY_REMEMBER = ToolDefinition(
         ParameterSpec(
             "confidence",
             ParameterType.NUMBER,
+            required=False,
             minimum=0,
             maximum=1,
         ),
@@ -353,28 +376,6 @@ MEMORY_FORGET = ToolDefinition(
     permission="memory.forget",
     parameters=(
         ParameterSpec("memory_id", ParameterType.STRING, min_length=1, max_length=100),
-STICKER_LIST = ToolDefinition(
-    name="sticker.list",
-    description="List recent YeBot stickers for owner review and cleanup.",
-    permission="sticker.manage",
-    parameters=(
-        ParameterSpec(
-            "limit", ParameterType.INTEGER, required=False, minimum=1, maximum=50
-        ),
-    ),
-    risk=ToolRisk.LOW,
-)
-
-STICKER_DELETE = ToolDefinition(
-    name="sticker.delete",
-    description="Delete one named sticker from YeBot's shared local library.",
-    permission="sticker.manage",
-    parameters=(
-        ParameterSpec("sticker_id", ParameterType.STRING, min_length=1, max_length=100),
-    ),
-    risk=ToolRisk.MEDIUM,
-)
-
     ),
     risk=ToolRisk.LOW,
 )
@@ -397,12 +398,13 @@ TOOL_CATALOG: tuple[ToolDefinition, ...] = (
     FILE_READ,
     WEB_FETCH,
     MODEL_RATINGS,
+    TOKEN_CALCULATE,
     STICKER_CONSIDER,
     STICKER_SEARCH,
     STICKER_SEND,
+    STICKER_LIST,
+    STICKER_DELETE,
     MEMORY_REMEMBER,
     MEMORY_RECALL,
     MEMORY_FORGET,
 )
-    STICKER_LIST,
-    STICKER_DELETE,

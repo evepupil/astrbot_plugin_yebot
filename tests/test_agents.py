@@ -19,8 +19,13 @@ from yebot.runtime.agents import (
 )
 
 
-def summary(*, mentioned: bool = True, text: str = "查一下") -> MessageSummary:
-    return MessageSummary(text, "42", "100", UserRole.MEMBER, mentioned)
+def summary(
+    *,
+    mentioned: bool = True,
+    text: str = "查一下",
+    role: UserRole = UserRole.MEMBER,
+) -> MessageSummary:
+    return MessageSummary(text, "42", "100", role, mentioned)
 
 
 def test_router_returns_explainable_decisions() -> None:
@@ -56,6 +61,29 @@ def test_background_route_can_use_a_tool_without_a_mention() -> None:
 
     assert route.kind is RouteKind.TOOL
     assert route.target == "sticker.search"
+
+
+def test_owner_tool_request_can_skip_group_mention_gate() -> None:
+    route = AgentRouter().route(
+        summary(mentioned=False, role=UserRole.OWNER),
+        requested_tool="group.mute_member",
+        tool_arguments={"user_id": "7", "duration_seconds": 60},
+    )
+
+    assert (route.kind, route.reason) == (
+        RouteKind.TOOL,
+        "owner_explicit_tool_request",
+    )
+    assert route.target == "group.mute_member"
+
+
+def test_unmentioned_member_tool_request_stays_blocked() -> None:
+    route = AgentRouter().route(
+        summary(mentioned=False),
+        requested_tool="group.mute_member",
+    )
+
+    assert (route.kind, route.reason) == (RouteKind.IGNORE, "bot_not_mentioned")
 
 
 def test_planner_builds_tool_and_restricted_subagent_steps() -> None:

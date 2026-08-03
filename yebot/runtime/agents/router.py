@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
+from ...domain.identity import UserRole
 from .models import (
     AgentPlan,
     MessageSummary,
@@ -32,14 +33,26 @@ class AgentRouter:
         requested_subagent: str | None = None,
         allow_unmentioned: bool = False,
     ) -> RouteDecision:
-        if not allow_unmentioned and not summary.mentioned and summary.group_id:
+        owner_tool_request = (
+            summary.role is UserRole.OWNER and requested_tool is not None
+        )
+        if (
+            not allow_unmentioned
+            and not owner_tool_request
+            and not summary.mentioned
+            and summary.group_id
+        ):
             return RouteDecision(RouteKind.IGNORE, "bot_not_mentioned")
         if requested_tool and requested_subagent:
             return RouteDecision(RouteKind.DIRECT, "ambiguous_route_request")
         if requested_tool:
             return RouteDecision(
                 RouteKind.TOOL,
-                "explicit_tool_request",
+                (
+                    "owner_explicit_tool_request"
+                    if owner_tool_request and not summary.mentioned
+                    else "explicit_tool_request"
+                ),
                 target=requested_tool,
                 arguments=tool_arguments or {},
             )

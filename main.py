@@ -35,6 +35,7 @@ try:
         AgentRouter,
         AgentRunResult,
         MessageSummary,
+        RouteKind,
         RunStatus,
         SubAgentRequest,
         SubAgentResult,
@@ -99,6 +100,7 @@ except ImportError:
         AgentRouter,
         AgentRunResult,
         MessageSummary,
+        RouteKind,
         RunStatus,
         SubAgentRequest,
         SubAgentResult,
@@ -1096,6 +1098,13 @@ class YeBot(Star):
             allow_unmentioned=bool(_BACKGROUND_TOOL_MODE.get()),
         )
         plan = self._agent_planner.build(route, plan_id=summary.request_id)
+        if route.kind is RouteKind.IGNORE:
+            return AgentRunResult(
+                RunStatus.FAILED,
+                plan,
+                (),
+                f"tool request ignored: {route.reason}",
+            )
         if plan.steps:
             reservation = self._agent_request_tracker.reserve(summary.request_id)
             if not reservation.allowed:

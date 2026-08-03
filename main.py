@@ -24,6 +24,7 @@ try:
         extract_mentioned_user_ids,
         is_bot_mentioned,
         normalize_id,
+        normalize_id_list,
         parse_identity,
     )
     from .yebot.domain.policy import LowFrequencyPolicy, PolicyConfig
@@ -89,6 +90,7 @@ except ImportError:
         extract_mentioned_user_ids,
         is_bot_mentioned,
         normalize_id,
+        normalize_id_list,
         parse_identity,
     )
     from yebot.domain.policy import LowFrequencyPolicy, PolicyConfig
@@ -313,11 +315,20 @@ class YeBot(Star):
     def __init__(self, context: Context, config: dict[str, Any] | None = None) -> None:
         super().__init__(context, config)
         values: Mapping[str, Any] = config or {}
-        configured_owner_ids = _as_id_list(values.get("owner_qq_ids"))
+        configured_owner_ids = normalize_id_list(values.get("owner_qq_ids"))
         astrbot_config = context.get_config()
-        astrbot_owner_ids = _as_id_list(astrbot_config.get("admins_id"))
+        astrbot_owner_ids = normalize_id_list(astrbot_config.get("admins_id"))
         self._owner_ids = tuple(
             dict.fromkeys((*configured_owner_ids, *astrbot_owner_ids))
+        )
+        logger.info(
+            "YeBot owner configuration loaded: plugin_type=%s plugin_count=%d "
+            "global_type=%s global_count=%d effective_count=%d",
+            type(values.get("owner_qq_ids")).__name__,
+            len(configured_owner_ids),
+            type(astrbot_config.get("admins_id")).__name__,
+            len(astrbot_owner_ids),
+            len(self._owner_ids),
         )
         self._bot_id = str(values.get("bot_qq_id", "")).strip()
         self._observe_only = _as_bool(values.get("observe_only"), True)

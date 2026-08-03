@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
@@ -41,6 +42,29 @@ def normalize_id(value: Any) -> str:
     if isinstance(value, str):
         return value.strip()
     return ""
+
+
+def normalize_id_list(value: object) -> tuple[str, ...]:
+    """Normalize AstrBot's list-like configuration forms for QQ IDs."""
+
+    if isinstance(value, str):
+        normalized = value.strip()
+        if not normalized:
+            return ()
+        if normalized.startswith("["):
+            try:
+                decoded = json.loads(normalized)
+            except json.JSONDecodeError:
+                return ()
+            if isinstance(decoded, list | tuple | set):
+                return normalize_id_list(decoded)
+            return ()
+        values: Iterable[object] = normalized.split(",")
+    elif isinstance(value, list | tuple | set):
+        values = value
+    else:
+        return ()
+    return tuple(item for entry in values if (item := normalize_id(entry)))
 
 
 def parse_identity(

@@ -2,6 +2,7 @@ from yebot.domain.identity import (
     UserRole,
     extract_mentioned_user_ids,
     is_bot_mentioned,
+    normalize_id_list,
     parse_identity,
 )
 
@@ -42,6 +43,16 @@ def test_member_is_default_role() -> None:
     )
 
     assert identity.role is UserRole.MEMBER
+
+
+def test_normalize_id_list_accepts_astrbot_config_forms() -> None:
+    assert normalize_id_list(["42", 99, ""]) == ("42", "99")
+    assert normalize_id_list("42") == ("42",)
+    assert normalize_id_list("42, 99") == ("42", "99")
+    assert normalize_id_list('["42", 99]') == ("42", "99")
+    assert normalize_id_list("[]") == ()
+    assert normalize_id_list("[invalid") == ()
+    assert normalize_id_list(None) == ()
 
 
 def test_at_segment_and_legacy_cq_mention_are_supported() -> None:

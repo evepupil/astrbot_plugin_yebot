@@ -15,7 +15,7 @@ from typing import Any
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
-from astrbot.api.message_components import Image, Plain, Reply
+from astrbot.api.message_components import Image, Plain, Record, Reply
 from astrbot.api.provider import ProviderRequest
 from astrbot.api.star import Context, Star, register
 
@@ -72,6 +72,11 @@ try:
     from .yebot.runtime.observer import observe_event
     from .yebot.runtime.release import AuditLogWriter, RuntimeMetrics
     from .yebot.runtime.replies import extract_reply_references, resolve_reply_context
+    from .yebot.runtime.response_media import (
+        ResponseMode,
+        ResponseModeStore,
+        parse_response_mode_intent,
+    )
     from .yebot.runtime.stickers import (
         NativeStickerClient,
         StickerService,
@@ -139,6 +144,11 @@ except ImportError:
     from yebot.runtime.observer import observe_event
     from yebot.runtime.release import AuditLogWriter, RuntimeMetrics
     from yebot.runtime.replies import extract_reply_references, resolve_reply_context
+    from yebot.runtime.response_media import (
+        ResponseMode,
+        ResponseModeStore,
+        parse_response_mode_intent,
+    )
     from yebot.runtime.stickers import (
         NativeStickerClient,
         StickerService,
@@ -173,6 +183,13 @@ def _as_float(value: object, default: float) -> float:
 
 def _as_text(value: object, default: str) -> str:
     return value.strip() if isinstance(value, str) and value.strip() else default
+
+
+def _as_response_mode(value: object, default: ResponseMode) -> ResponseMode:
+    try:
+        return ResponseMode(_as_text(value, default.value).lower())
+    except ValueError:
+        return default
 
 
 def _as_id_list(value: object) -> tuple[str, ...]:
@@ -317,6 +334,11 @@ YeBot 已经在代码侧执行了当前明确的记忆请求。不要再次调�
 只根据下面的执行结果如实回复用户；成功才可以说已经保存，失败时说明原因。
 """
 
+_RESPONSE_MEDIA_GUIDANCE = """\
+当前回复媒介已由 YeBot 选定。只生成要表达的正常内容；不要输出“语音模式”、
+“我无法发送语音”或任何媒体控制说明。
+"""
+
 
 @register(
     "astrbot_plugin_yebot",
@@ -426,6 +448,15 @@ class YeBot(Star):
         self._memory_service = MemoryService(
             SQLiteMemoryStore(
                 _as_text(values.get("memory_store_path"), "data/yebot_memory.db")
+            )
+        )
+        self._response_mode_default = _as_response_mode(
+            values.get("response_mode_default"), ResponseMode.TEXT
+        )
+        self._response_mode_store = ResponseModeStore(
+            _as_text(
+                values.get("response_mode_store_path"),
+                "data/yebot_response_modes.json",
             )
         )
         self._job_task: asyncio.Task[None] | None = None
@@ -939,11 +970,14 @@ class YeBot(Star):
         if reply_context and reply_context not in request.prompt:
             request.prompt = f"{request.prompt.rstrip()}\n\n{reply_context}"
         current_message_text = _current_message_text(event)
+        response_mode = self._prepare_response_mode(event, current_message_text)
         if await self._prehandle_owner_reminder(event, current_message_text):
             return
         message_text = _message_text(event)
         system_prompt = request.system_prompt.rstrip()
         additions: list[str] = []
+        if response_mode is not ResponseMode.TEXT:
+            additions.append(_RESPONSE_MEDIA_GUIDANCE)
         if _AGENT_TOOL_GUIDANCE not in system_prompt and _has_yebot_tools(request):
             additions.append(_AGENT_TOOL_GUIDANCE)
         memory_result = await self._prehandle_memory_write(event, message_text)
@@ -973,6 +1007,105 @@ class YeBot(Star):
                     additions.append(context)
         if additions:
             request.system_prompt = f"{system_prompt}\n\n" + "\n\n".join(additions)
+
+    def _prepare_response_mode(
+        self,
+        event: AstrMessageEvent,
+        message_text: str,
+    ) -> ResponseMode:
+        """Choose one response medium and persist only explicit future preferences."""
+
+        raw_event = getattr(getattr(event, "message_obj", None), "raw_message", None)
+        if not isinstance(raw_event, Mapping):
+            return self._response_mode_default
+        identity = parse_identity(raw_event, self._owner_ids)
+        intent = parse_response_mode_intent(message_text)
+        if intent.clear_preference:
+            self._response_mode_store.clear(identity.user_id)
+            mode = self._response_mode_default
+        elif intent.mode is not None:
+            mode = intent.mode
+            if intent.persist:
+                self._response_mode_store.set(identity.user_id, mode)
+        else:
+            mode = self._response_mode_store.get(identity.user_id)
+            if mode is None:
+                mode = self._response_mode_default
+        set_extra = getattr(event, "set_extra", None)
+        if callable(set_extra):
+            set_extra("yebot.response_mode", mode.value)
+        return mode
+
+    @filter.on_decorating_result()
+    async def apply_response_mode(
+        self,
+        event: AstrMessageEvent,
+    ) -> None:
+        """Render model text as deterministic text, voice, or both before send."""
+
+        mode = self._event_response_mode(event)
+        if mode is None:
+            return
+        result = event.get_result()
+        if result is None or not result.chain:
+            return
+        self._disable_automatic_response_transforms(result)
+        if mode is ResponseMode.TEXT:
+            return
+        tts_provider = self.context.get_using_tts_provider(
+            getattr(event, "unified_msg_origin", None)
+        )
+        if tts_provider is None:
+            logger.warning(
+                "YeBot response media requested voice but no TTS provider exists"
+            )
+            return
+        converted: list[object] = []
+        for component in result.chain:
+            if not isinstance(component, Plain) or not component.text.strip():
+                converted.append(component)
+                continue
+            try:
+                audio_path = await tts_provider.get_audio(component.text)
+            except Exception:
+                logger.exception("YeBot explicit TTS generation failed")
+                converted.append(component)
+                continue
+            if not audio_path:
+                logger.warning("YeBot explicit TTS returned no audio")
+                converted.append(component)
+                continue
+            track_file = getattr(event, "track_temporary_local_file", None)
+            if callable(track_file):
+                track_file(str(audio_path))
+            if mode is ResponseMode.DUAL:
+                converted.append(component)
+            converted.append(
+                Record(file=str(audio_path), url=str(audio_path), text=component.text)
+            )
+        result.chain = converted
+
+    @staticmethod
+    def _event_response_mode(event: AstrMessageEvent) -> ResponseMode | None:
+        get_extra = getattr(event, "get_extra", None)
+        raw_mode = (
+            get_extra("yebot.response_mode", None) if callable(get_extra) else None
+        )
+        try:
+            return ResponseMode(str(raw_mode))
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _disable_automatic_response_transforms(result: object) -> None:
+        """Prevent AstrBot's global probabilistic TTS from overriding YeBot mode."""
+
+        if hasattr(result, "use_t2i_"):
+            result.use_t2i_ = False
+        result_content_type = getattr(result, "result_content_type", None)
+        general_result = getattr(type(result_content_type), "GENERAL_RESULT", None)
+        if general_result is not None:
+            result.result_content_type = general_result
 
     async def _prehandle_owner_reminder(
         self,

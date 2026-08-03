@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
+from typing import Any
+
+from ...domain.identity import is_bot_mentioned
 
 _CQ_CODE_PATTERN = re.compile(r"\[CQ:[^\]]+]", re.IGNORECASE)
 _IMAGE_INTENT_PATTERNS = (
@@ -35,3 +39,12 @@ def extract_image_prompt(message: str) -> str | None:
         prompt = match.group("prompt").strip()
         return prompt[:32_000] or None
     return None
+
+
+def is_group_image_request_addressed(
+    raw_event: Mapping[str, Any],
+    bot_id: str,
+) -> bool:
+    """Require an explicit bot mention before handling a group image request."""
+
+    return is_bot_mentioned(raw_event, bot_id)

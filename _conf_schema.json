@@ -254,7 +254,7 @@
   "image_generation_enabled": {
     "type": "bool",
     "title": "启用生图",
-    "description": "识别到明确的画图请求后调用 GPT2IMAGE；这是用户主动请求，不受普通低频回复概率影响。",
+    "description": "群聊中需 @ 机器人并说出明确的画图请求后调用 GPT2IMAGE；私聊可直接请求。这是用户主动请求，不受普通低频回复概率影响。",
     "default": true
   },
   "image_api_base_url": {

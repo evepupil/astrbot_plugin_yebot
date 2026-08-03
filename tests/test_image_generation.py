@@ -8,6 +8,7 @@ from yebot.runtime.image_generation import (
     ImageGenerationClient,
     ImageGenerationError,
     extract_image_prompt,
+    is_group_image_request_addressed,
 )
 
 
@@ -21,6 +22,16 @@ def test_extract_image_prompt_supports_english_and_rejects_questions() -> None:
     assert extract_image_prompt("draw a tiny red house") == "a tiny red house"
     assert extract_image_prompt("这个图要怎么画") is None
     assert extract_image_prompt("画") is None
+
+
+def test_group_image_request_requires_a_mention_to_the_bot() -> None:
+    without_mention = {"message": [{"type": "text", "data": {"text": "画一只猫"}}]}
+    with_other_mention = {"message": [{"type": "at", "data": {"qq": "456"}}]}
+    with_bot_mention = {"message": [{"type": "at", "data": {"qq": "123"}}]}
+
+    assert not is_group_image_request_addressed(without_mention, "123")
+    assert not is_group_image_request_addressed(with_other_mention, "123")
+    assert is_group_image_request_addressed(with_bot_mention, "123")
 
 
 def test_daily_quota_is_shared_across_restarts_and_resets_by_day(

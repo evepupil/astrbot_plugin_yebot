@@ -46,6 +46,7 @@ try:
         ImageGenerationClient,
         ImageGenerationError,
         extract_image_prompt,
+        is_group_image_request_addressed,
     )
     from .yebot.runtime.jobs import Job, JobScheduler, JsonJobStore
     from .yebot.runtime.memory import (
@@ -96,6 +97,7 @@ except ImportError:
         ImageGenerationClient,
         ImageGenerationError,
         extract_image_prompt,
+        is_group_image_request_addressed,
     )
     from yebot.runtime.jobs import Job, JobScheduler, JsonJobStore
     from yebot.runtime.memory import (
@@ -1442,6 +1444,14 @@ class YeBot(Star):
         self,
         event: AstrMessageEvent,
     ) -> None:
+        raw_event = getattr(event.message_obj, "raw_message", None)
+        if not isinstance(raw_event, Mapping):
+            return
+        if not is_group_image_request_addressed(
+            raw_event,
+            event.get_self_id() or self._bot_id,
+        ):
+            return
         await self._handle_image_generation_request(event)
 
     @filter.platform_adapter_type(filter.PlatformAdapterType.AIOCQHTTP)

@@ -79,6 +79,7 @@ try:
         extract_image_components,
     )
     from .yebot.runtime.targeting import TargetResolution, TargetResolver, TargetStatus
+    from .yebot.runtime.token_calculator import TokenCalculator
     from .yebot.runtime.tools import ToolContext, ToolResult, ToolResultCode
     from .yebot.runtime.tools.onebot import (
         OneBotActionClient,
@@ -144,6 +145,7 @@ except ImportError:
         StickerStore,
         extract_image_components,
     )
+    from yebot.runtime.token_calculator import TokenCalculator
     from yebot.runtime.targeting import TargetResolution, TargetResolver, TargetStatus
     from yebot.runtime.tools import ToolContext, ToolResult, ToolResultCode
     from yebot.runtime.tools.onebot import (
@@ -272,6 +274,12 @@ YeBot 工具选择规则：
   不要在同一轮自动调用 yebot_confirm_action。
 - 用户明确确认后，调用 yebot_confirm_action；确认编号只能由原操作者在原群使用一次。
 - 用户要求稍后提醒、查看提醒或管理提醒时，使用对应的 yebot_reminder_* 工具；
+- 用户询问 Token 数量、Token 用量、Token 成本、缓存命中率或预计账单时，调用
+  yebot_token_calculate。总 Token 数按百万 M 传入：1 万 Token 是 0.01，100 万 Token 是
+  1；默认使用 TokenCal 的国产 / Agent 交互场景和页面默认价格。用户明确给出国外 /
+  长上下文场景或价格时，把对应参数一并传入。它计算的是总 Token 对应的综合单价和
+  预计费用。
+  未提供的 Token 数量不要自行编造。
   普通回复不要创建任务。
 - 给某人创建提醒时，把人名、回复对象或“他”等指代放入 reminder 的 target 参数；工具会先
   解析为唯一成员，再在到期消息中 @ 该成员。
@@ -345,6 +353,11 @@ class YeBot(Star):
                 timeout_seconds=max(
                     1.0,
                     min(
+        self._token_calculator = (
+            TokenCalculator()
+            if _as_bool(values.get("token_calculator_enabled"), True)
+            else None
+        )
                         _as_float(values.get("model_ratings_timeout_seconds"), 8.0),
                         30.0,
                     ),
@@ -501,6 +514,7 @@ class YeBot(Star):
 
         Every Agent and function-tool adapter uses this entry point. Keeping
         identity extraction here ensures all callers use the same owner and
+            token_calculator=self._token_calculator,
         group-admin rules as message observation.
         """
 
@@ -571,6 +585,7 @@ class YeBot(Star):
             )
         return context
 
+            token_calculator=self._token_calculator,
     async def confirm_tool(
         self,
         event: AstrMessageEvent,
@@ -1186,6 +1201,7 @@ class YeBot(Star):
             return TargetResolution(TargetStatus.UNRESOLVED)
         identity = parse_identity(raw_event, self._owner_ids)
         return await TargetResolver(resolve_event_action_client(event)).resolve(
+                "token.calculate": "yebot_token_calculate",
             event,
             target_hint=target_hint.strip() or _current_message_text(event),
             actor_id=identity.user_id,
@@ -1757,6 +1773,30 @@ class YeBot(Star):
         )
 
     @filter.llm_tool(name="yebot_reminder_pause")
+    @filter.llm_tool(name="yebot_token_calculate")
+    async def llm_token_calculate(
+        self,
+        event: AstrMessageEvent,
+        total_tokens_million: float,
+        scene: str = "domestic",
+        input_price: float = 1.40,
+        output_price: float = 4.40,
+        cache_price: float = 0.26,
+        cache_hit_rate: float = 92.2,
+    ) -> str:
+        """按 TokenCal 公式计算 Token 综合单价和预计费用。"""
+
+        arguments: dict[str, object] = {
+            "total_tokens_million": total_tokens_million,
+            "scene": scene,
+            "input_price": input_price,
+            "output_price": output_price,
+            "cache_price": cache_price,
+            "cache_hit_rate": cache_hit_rate,
+        }
+        return self._encode_run(
+            await self._run_single_tool(event, "token.calculate", arguments)
+        )
     async def llm_reminder_pause(
         self,
         event: AstrMessageEvent,

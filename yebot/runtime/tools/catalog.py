@@ -206,6 +206,52 @@ MODEL_RATINGS = ToolDefinition(
     ),
     risk=ToolRisk.LOW,
 )
+TOKEN_CALCULATE = ToolDefinition(
+    name="token.calculate",
+    description=(
+        "Calculate TokenCal's blended price and estimated bill from total tokens "
+        "measured in million M."
+    ),
+    permission="token.calculate",
+    parameters=(
+        ParameterSpec(
+            "total_tokens_million",
+            ParameterType.NUMBER,
+            minimum=0,
+            maximum=1_000_000_000,
+        ),
+        ParameterSpec("scene", ParameterType.STRING, required=False, max_length=32),
+        ParameterSpec(
+            "input_price",
+            ParameterType.NUMBER,
+            required=False,
+            minimum=0,
+            maximum=1_000_000,
+        ),
+        ParameterSpec(
+            "output_price",
+            ParameterType.NUMBER,
+            required=False,
+            minimum=0,
+            maximum=1_000_000,
+        ),
+        ParameterSpec(
+            "cache_price",
+            ParameterType.NUMBER,
+            required=False,
+            minimum=0,
+            maximum=1_000_000,
+        ),
+        ParameterSpec(
+            "cache_hit_rate",
+            ParameterType.NUMBER,
+            required=False,
+            minimum=0,
+            maximum=100,
+        ),
+    ),
+    risk=ToolRisk.LOW,
+)
 
 STICKER_CONSIDER = ToolDefinition(
     name="sticker.consider",

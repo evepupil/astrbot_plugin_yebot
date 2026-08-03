@@ -42,6 +42,12 @@
     "minimum": 0,
     "maximum": 3600
   },
+  "token_calculator_enabled": {
+    "type": "bool",
+    "title": "启用 Token 用量计算",
+    "description": "启用只读的 TokenCal 综合单价和预计账单计算工具。",
+    "default": true
+  },
   "confirmation_ttl_seconds": {
     "type": "int",
     "title": "踢人确认有效期（秒）",

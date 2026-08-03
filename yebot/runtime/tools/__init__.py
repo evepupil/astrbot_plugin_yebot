@@ -25,6 +25,7 @@ from .catalog import (
     STICKER_CONSIDER,
     STICKER_SEARCH,
     STICKER_SEND,
+    TOKEN_CALCULATE,
     TOOL_CATALOG,
     WEB_FETCH,
 )
@@ -60,6 +61,7 @@ __all__ = [
     "MEMORY_FORGET",
     "MEMORY_RECALL",
     "MEMORY_REMEMBER",
+    "TOKEN_CALCULATE",
     "MODEL_RATINGS",
     "REMINDER_CANCEL",
     "REMINDER_CREATE",

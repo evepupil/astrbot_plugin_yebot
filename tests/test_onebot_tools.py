@@ -8,6 +8,7 @@ import pytest
 from yebot.domain.identity import Identity, UserRole
 from yebot.runtime.memory import MemoryService, SQLiteMemoryStore
 from yebot.runtime.model_ratings import ModelRatingsClient
+from yebot.runtime.token_calculator import TokenCalculator
 from yebot.runtime.tools import ToolContext, ToolResultCode
 from yebot.runtime.tools.onebot import (
     OneBotActionClient,
@@ -40,6 +41,7 @@ def runtime(
     dry_run: bool = True,
     memory_service: MemoryService | None = None,
     model_ratings_client: ModelRatingsClient | None = None,
+    token_calculator: TokenCalculator | None = None,
     event: object | None = None,
 ) -> OneBotToolRuntime:
     return OneBotToolRuntime.from_client(
@@ -47,6 +49,7 @@ def runtime(
         dry_run=dry_run,
         memory_service=memory_service,
         model_ratings_client=model_ratings_client,
+        token_calculator=token_calculator,
         event=event,
     )
 
@@ -658,6 +661,25 @@ def test_model_ratings_is_a_public_read_only_tool() -> None:
     assert result.value["returned_count"] == 1  # type: ignore[index]
     assert result.value["models"][0]["label"] == (  # type: ignore[index]
         "DeepSeek V4 Flash max"
+    )
+    assert client.calls == []
+
+
+def test_token_calculator_is_a_public_read_only_tool() -> None:
+    client = FakeActionClient({})
+
+    result = asyncio.run(
+        runtime(client, token_calculator=TokenCalculator()).execute(
+            "token.calculate",
+            {"total_tokens_million": 1, "scene": "domestic"},
+            tool_context(UserRole.MEMBER, group_id=""),
+        )
+    )
+
+    assert result.code is ToolResultCode.SUCCESS
+    assert result.value["source"] == "TokenCal"  # type: ignore[index]
+    assert result.value["estimated_total_cost_display"] == (  # type: ignore[index]
+        "$0.37"
     )
     assert client.calls == []
 

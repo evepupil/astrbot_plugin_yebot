@@ -21,6 +21,7 @@ from ..model_ratings import ModelRatingsClient
 from ..release import RuntimeMetrics
 from ..replies import render_onebot_message
 from ..stickers import NativeStickerClient, StickerService, StickerStore
+from ..token_calculator import TokenCalculator
 from .catalog import (
     FILE_READ,
     FORWARD_SCENE_SEND,
@@ -44,6 +45,7 @@ from .catalog import (
     REMINDER_RESUME,
     STICKER_CONSIDER,
     STICKER_SEARCH,
+    TOKEN_CALCULATE,
     STICKER_DELETE,
     STICKER_LIST,
     STICKER_SEND,
@@ -102,6 +104,7 @@ class OneBotToolRuntime:
         scheduler: JobScheduler | None = None,
         file_root: str | Path | None = None,
         protect_target_roles: bool = False,
+        token_calculator: TokenCalculator | None = None,
         metrics: RuntimeMetrics | None = None,
         sticker_store: StickerStore | None = None,
         memory_service: MemoryService | None = None,
@@ -120,6 +123,7 @@ class OneBotToolRuntime:
                 StickerService(
                     sticker_store,
                     NativeStickerClient(client.call_action) if not dry_run else None,
+            token_calculator=token_calculator,
                 )
                 if sticker_store
                 else None
@@ -152,6 +156,8 @@ class OneBotToolRuntime:
         registry.register(WEB_FETCH, handlers.fetch_web)
         if handlers.sticker_service is not None:
             registry.register(STICKER_CONSIDER, handlers.consider_sticker)
+        if handlers.token_calculator is not None:
+            registry.register(TOKEN_CALCULATE, handlers.calculate_token_cost)
             registry.register(STICKER_SEARCH, handlers.search_stickers)
             registry.register(STICKER_SEND, handlers.send_sticker)
         if handlers.memory_service is not None:
@@ -166,6 +172,7 @@ class OneBotToolRuntime:
 
     @classmethod
     def from_event(
+        token_calculator: TokenCalculator | None = None,
         cls,
         event: object,
         *,
@@ -180,6 +187,7 @@ class OneBotToolRuntime:
         model_ratings_client: ModelRatingsClient | None = None,
     ) -> OneBotToolRuntime | None:
         client = resolve_event_action_client(event)
+            token_calculator=token_calculator,
         if client is None:
             return None
         sticker_min_auto_collect_confidence: float = 0.9,
@@ -212,6 +220,7 @@ class OneBotToolRuntime:
         context: ToolContext,
     ) -> ToolResult:
         return await self._gateway.confirm(confirmation_id, context)
+        token_calculator: TokenCalculator | None,
 
 
 class _OneBotHandlers:
@@ -221,6 +230,7 @@ class _OneBotHandlers:
         self,
         client: OneBotActionClient,
         *,
+        self.token_calculator = token_calculator
         dry_run: bool,
         scheduler: JobScheduler | None,
         file_root: str | Path | None,
@@ -595,6 +605,35 @@ class _OneBotHandlers:
         del context
         if self.model_ratings_client is None:
             raise RuntimeError("model ratings service unavailable")
+    async def calculate_token_cost(
+        self,
+        context: ToolContext,
+        arguments: Mapping[str, object],
+    ) -> object:
+        del context
+        if self.token_calculator is None:
+            raise RuntimeError("token calculator service unavailable")
+        total_tokens_million = arguments.get("total_tokens_million")
+        if not isinstance(total_tokens_million, (int, float)) or isinstance(
+            total_tokens_million, bool
+        ):
+            raise ValueError("total_tokens_million must be a number")
+        scene = arguments.get("scene", "domestic")
+        if not isinstance(scene, str):
+            raise ValueError("scene must be a string")
+
+        input_price = arguments.get("input_price", 1.40)
+        output_price = arguments.get("output_price", 4.40)
+        cache_price = arguments.get("cache_price", 0.26)
+        cache_hit_rate = arguments.get("cache_hit_rate", 92.2)
+        return self.token_calculator.calculate(
+            total_tokens_million=float(total_tokens_million),
+            scene=scene,
+            input_price=_numeric_value(input_price, "input_price"),
+            output_price=_numeric_value(output_price, "output_price"),
+            cache_price=_numeric_value(cache_price, "cache_price"),
+            cache_hit_rate=_numeric_value(cache_hit_rate, "cache_hit_rate"),
+        )
         query = arguments.get("query", "")
         limit = arguments.get("limit", 10)
         include_history = arguments.get("include_history", False)
@@ -935,6 +974,12 @@ def _member_role(response: object) -> str:
         return ""
     role = candidate.get("role")
     return role.strip().lower() if isinstance(role, str) else ""
+def _numeric_value(value: object, label: str) -> float:
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        raise ValueError(f"{label} must be a number")
+    return float(value)
+
+
 
 
 def _sanitize_member(member: Mapping[str, object]) -> dict[str, str]:

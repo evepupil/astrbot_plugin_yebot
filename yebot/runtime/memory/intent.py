@@ -31,7 +31,11 @@ class MemoryWriteIntent:
     content: str
 
 
-def parse_explicit_memory_write_request(text: str) -> MemoryWriteIntent | None:
+def parse_explicit_memory_write_request(
+    text: str,
+    *,
+    is_group_chat: bool = False,
+) -> MemoryWriteIntent | None:
     """Extract a conservative write intent without treating ordinary chat as memory."""
 
     normalized = " ".join(text.split())
@@ -53,6 +57,18 @@ def parse_explicit_memory_write_request(text: str) -> MemoryWriteIntent | None:
     group_markers = ("本群", "群规", "当前群", "群里")
     bot_markers = ("机器人", "人设", "主人", "bot")
     preference_markers = ("喜欢", "偏好", "习惯", "回答", "回复", "风格")
+    if is_group_chat:
+        if any(marker in content for marker in group_markers + bot_markers):
+            kind = MemoryKind.RULE
+            topic = "群规"
+        elif any(marker in content for marker in preference_markers):
+            kind = MemoryKind.PREFERENCE
+            topic = "群偏好"
+        else:
+            kind = MemoryKind.FACT
+            topic = content[:120]
+        return MemoryWriteIntent(MemoryScope.GROUP, kind, topic, content)
+
     if any(marker in content for marker in group_markers):
         scope = MemoryScope.GROUP
         kind = MemoryKind.RULE
@@ -72,7 +88,14 @@ def parse_explicit_memory_write_request(text: str) -> MemoryWriteIntent | None:
     return MemoryWriteIntent(scope, kind, topic, content)
 
 
-def is_explicit_memory_write_request(text: str) -> bool:
+def is_explicit_memory_write_request(
+    text: str,
+    *,
+    is_group_chat: bool = False,
+) -> bool:
     """Return whether text starts with an unambiguous memory-write request."""
 
-    return parse_explicit_memory_write_request(text) is not None
+    return (
+        parse_explicit_memory_write_request(text, is_group_chat=is_group_chat)
+        is not None
+    )

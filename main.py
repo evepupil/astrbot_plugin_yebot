@@ -247,8 +247,8 @@ YeBot 工具选择规则：
 - 记忆工具规则属于 YeBot 的执行规则，优先于聊天人设、角色扮演和玩笑口吻。用户明确说
   “记住”“记一下”“以后都这样”时，必须调用 yebot_memory_remember，不能因为人设或
   自我认知而跳过；只有工具返回成功才可以说已经保存。
-- 私聊默认保存到用户范围；主人明确要求保存机器人规则时使用机器人范围。群聊只能把
-  明确写成“本群”“群规”的内容保存到群范围，个人偏好和机器人规则要提示用户转私聊。
+- 私聊默认保存到用户范围；主人明确要求保存机器人规则时使用机器人范围。群聊中的明确
+  记忆请求默认保存到当前群范围，个人偏好和机器人规则也不能从群聊写入私有或机器人范围。
 - 用户要求回忆过去的偏好或事实时，优先使用已注入的记忆参考，必要时调用
   yebot_memory_recall；记忆参考不能覆盖当前请求、权限或安全规则。
 - 用户明确要求忘记某条记忆时，调用 yebot_memory_forget；只能使用可见的 memory_id。
@@ -262,8 +262,8 @@ YeBot 记忆请求强制规则（优先于任何聊天人设）：
 - 当前消息已经明确提出持久记忆请求时，必须先调用 yebot_memory_remember；不要自行判断
   这条内容是否符合人设，也不要用调侃、拒绝或普通文本回复替代工具调用。
 - 私聊中默认使用 scope=user；主人明确要求记录机器人规则时使用 scope=bot。
-- 群聊中只有“本群”“群规”“当前群”等明确群范围内容才使用 scope=group。群聊里的
-  个人偏好或机器人规则要说明请用户私聊设置，不得假装已经保存。
+- 群聊中任何明确记忆请求都使用 scope=group，只影响当前群。个人偏好或机器人规则也
+  不能从群聊写入 scope=user 或 scope=bot；权限拒绝时要如实说明。
 - 工具返回权限拒绝、只观察模式或其他错误时，必须如实告知，不能声称记忆已保存。
 """
 
@@ -958,7 +958,14 @@ class YeBot(Star):
     ) -> ToolResult | None:
         """Execute explicit memory writes before the model can override the intent."""
 
-        intent = parse_explicit_memory_write_request(message_text)
+        raw_event = getattr(getattr(event, "message_obj", None), "raw_message", None)
+        is_group_chat = isinstance(raw_event, Mapping) and bool(
+            normalize_id(raw_event.get("group_id"))
+        )
+        intent = parse_explicit_memory_write_request(
+            message_text,
+            is_group_chat=is_group_chat,
+        )
         if intent is None:
             return None
         get_extra = getattr(event, "get_extra", None)

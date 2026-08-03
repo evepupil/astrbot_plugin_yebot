@@ -35,11 +35,20 @@ def test_explicit_memory_write_intent(text: str, expected: bool) -> None:
     assert is_explicit_memory_write_request(text) is expected
 
 
-def test_memory_write_intent_selects_scope_and_kind() -> None:
+def test_memory_write_intent_selects_scope_and_kind_from_chat_context() -> None:
     private = parse_explicit_memory_write_request("记住，我喜欢简短的中文回答")
     assert private is not None
     assert private.scope.value == "user"
     assert private.kind.value == "preference"
+
+    group_default = parse_explicit_memory_write_request(
+        "记住，我喜欢简短的中文回答",
+        is_group_chat=True,
+    )
+    assert group_default is not None
+    assert group_default.scope.value == "group"
+    assert group_default.kind.value == "preference"
+    assert group_default.topic == "群偏好"
 
     group = parse_explicit_memory_write_request("记住，本群晚上不要主动刷屏")
     assert group is not None
@@ -50,6 +59,15 @@ def test_memory_write_intent_selects_scope_and_kind() -> None:
     assert bot is not None
     assert bot.scope.value == "bot"
     assert bot.kind.value == "rule"
+
+    group_bot = parse_explicit_memory_write_request(
+        "记一下，我是你的主人",
+        is_group_chat=True,
+    )
+    assert group_bot is not None
+    assert group_bot.scope.value == "group"
+    assert group_bot.kind.value == "rule"
+    assert group_bot.topic == "群规"
 
 
 def identity(

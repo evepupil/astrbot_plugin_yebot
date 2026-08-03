@@ -1233,6 +1233,7 @@ class YeBot(Star):
 
         Args:
             user_id(string): 要操作的 QQ 号
+            target(string): 人名、群名片、回复对象或“他”等指代。
             reason(string): 操作原因
         """
         resolution = await self._resolve_member_target(event, target or user_id)
@@ -1261,6 +1262,7 @@ class YeBot(Star):
 
         Args:
             user_id(string): 要操作的 QQ 号
+            target(string): 人名、群名片、回复对象或“他”等指代。
             duration_seconds(number): 禁言秒数，可省略；省略时由模型选择，工具默认 60 秒
             reason(string): 操作原因
         """
@@ -1296,6 +1298,7 @@ class YeBot(Star):
 
         Args:
             user_id(string): 要操作的 QQ 号
+            target(string): 人名、群名片、回复对象或“他”等指代。
         """
         resolution = await self._resolve_member_target(event, target or user_id)
         if not resolution.resolved:
@@ -1335,6 +1338,7 @@ class YeBot(Star):
             nodes(list[object]): 3 到 12 条对话，每项使用 speaker 和 content 文本字段；
                 被 @ 的对象使用 speaker=target。
             target_user_id(string): 被 @ 的目标 QQ 号；存在唯一目标 At 时优先使用它。
+            target(string): 人名、群名片、回复对象或自然语言指代。
         """
 
         resolution = await self._resolve_member_target(
@@ -1483,7 +1487,13 @@ class YeBot(Star):
         message: str,
         target: str = "",
     ) -> str:
-        """在当前群创建一条延时提醒。"""
+        """在当前群创建一条延时提醒。
+
+        Args:
+            delay_seconds(number): 延时秒数。
+            message(string): 到期时发送的提醒内容。
+            target(string): 要 @ 的人名、群名片、回复对象或自然语言指代。
+        """
 
         delay: object = delay_seconds
         if isinstance(delay_seconds, float) and delay_seconds.is_integer():

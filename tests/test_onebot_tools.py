@@ -3,6 +3,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from yebot.domain.identity import Identity, UserRole
 from yebot.runtime.memory import MemoryService, SQLiteMemoryStore
 from yebot.runtime.model_ratings import ModelRatingsClient
@@ -219,6 +221,77 @@ def test_member_cannot_invoke_kick_action() -> None:
 
     assert result.code is ToolResultCode.ROLE_DENIED
     assert client.calls == []
+
+
+@pytest.mark.parametrize("sender_id", [99, 1592829658])
+def test_admin_can_recall_a_member_or_bot_message(sender_id: int) -> None:
+    client = FakeActionClient(
+        {
+            "get_msg": {
+                "data": {
+                    "message_id": 123,
+                    "group_id": 100,
+                    "sender": {"user_id": sender_id},
+                }
+            },
+            "delete_msg": {"status": "ok", "retcode": 0},
+        }
+    )
+
+    result = asyncio.run(
+        runtime(client, dry_run=False).execute(
+            "message.recall",
+            {"message_id": 123},
+            tool_context(UserRole.GROUP_ADMIN),
+        )
+    )
+
+    assert result.code is ToolResultCode.SUCCESS
+    assert result.value == {
+        "message_id": "123",
+        "recalled": True,
+        "result": {
+            "dry_run": False,
+            "action": "delete_msg",
+            "params": {"message_id": 123},
+            "result": {"status": "ok", "retcode": 0},
+        },
+    }
+    assert client.calls == [
+        ("get_msg", {"message_id": 123}),
+        ("delete_msg", {"message_id": 123}),
+    ]
+
+
+def test_member_cannot_recall_a_message() -> None:
+    client = FakeActionClient({})
+
+    result = asyncio.run(
+        runtime(client).execute(
+            "message.recall",
+            {"message_id": 123},
+            tool_context(UserRole.MEMBER),
+        )
+    )
+
+    assert result.code is ToolResultCode.ROLE_DENIED
+    assert client.calls == []
+
+
+def test_recall_rejects_a_message_from_another_group() -> None:
+    client = FakeActionClient({"get_msg": {"data": {"group_id": 200}}})
+
+    result = asyncio.run(
+        runtime(client, dry_run=False).execute(
+            "message.recall",
+            {"message_id": 123},
+            tool_context(UserRole.OWNER),
+        )
+    )
+
+    assert result.code is ToolResultCode.EXECUTION_ERROR
+    assert result.error == "PermissionError"
+    assert client.calls == [("get_msg", {"message_id": 123})]
 
 
 def test_owner_forward_scene_uses_target_nickname_and_onebot_nodes() -> None:

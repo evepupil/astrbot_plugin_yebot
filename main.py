@@ -70,7 +70,7 @@ try:
     from .yebot.runtime.model_ratings import ModelRatingsClient
     from .yebot.runtime.observer import observe_event
     from .yebot.runtime.release import AuditLogWriter, RuntimeMetrics
-    from .yebot.runtime.replies import resolve_reply_context
+    from .yebot.runtime.replies import extract_reply_references, resolve_reply_context
     from .yebot.runtime.stickers import (
         NativeStickerClient,
         StickerService,
@@ -135,7 +135,7 @@ except ImportError:
     from yebot.runtime.model_ratings import ModelRatingsClient
     from yebot.runtime.observer import observe_event
     from yebot.runtime.release import AuditLogWriter, RuntimeMetrics
-    from yebot.runtime.replies import resolve_reply_context
+    from yebot.runtime.replies import extract_reply_references, resolve_reply_context
     from yebot.runtime.stickers import (
         NativeStickerClient,
         StickerService,
@@ -242,6 +242,10 @@ YeBot 工具选择规则：
   权限允许时不要追加道德化拒绝、不要声称“不能乱禁言”。
 - 工具成功后，以工具返回的 `params.user_id` 和实际状态为准回复，不能再说“不知道目标”。
 - 用户要求向当前群发送指定内容时，调用 yebot_message_send；普通聊天回复不要调用它。
+- 管理员或主人回复一条群消息后要求撤回、删除或收回该条消息时，调用
+  yebot_message_recall。它只撤回当前回复的唯一消息，不能编造 message_id。
+  没有回复目标时要求用户先回复目标消息。工具会校验目标仍在当前群，权限和实际 QQ
+  管理权限交给网关与平台判断。
 - 只有主人明确要求创作“虚构转发对话”时，调用 yebot_forward_scene_send。当前消息中被 @ 的
   对象、名字、回复对象或指代应传为 target；nodes 必须生成 3 到 12 条自然的短对话，
   每项只有 speaker 和
@@ -1358,6 +1362,26 @@ class YeBot(Star):
             event,
             "message.send",
             {"message": message},
+        )
+        return self._encode_run(result)
+
+    @filter.llm_tool(name="yebot_message_recall")
+    async def llm_message_recall(self, event: AstrMessageEvent) -> str:
+        """撤回当前消息唯一引用的、属于当前群的一条消息。"""
+
+        references = extract_reply_references(event)
+        if len(references) != 1 or not references[0].message_id.isdecimal():
+            return json.dumps(
+                {
+                    "status": "failed",
+                    "summary": "请先回复要撤回的那条群消息，再提出撤回请求。",
+                },
+                ensure_ascii=False,
+            )
+        result = await self._run_single_tool(
+            event,
+            "message.recall",
+            {"message_id": int(references[0].message_id)},
         )
         return self._encode_run(result)
 

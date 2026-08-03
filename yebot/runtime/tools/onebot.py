@@ -32,6 +32,7 @@ from .catalog import (
     MEMORY_FORGET,
     MEMORY_RECALL,
     MEMORY_REMEMBER,
+    MESSAGE_RECALL,
     MESSAGE_SEND,
     MODEL_RATINGS,
     REMINDER_CANCEL,
@@ -129,6 +130,7 @@ class OneBotToolRuntime:
         registry.register(GROUP_MUTE_MEMBER, handlers.mute_member)
         registry.register(GROUP_UNMUTE_MEMBER, handlers.unmute_member)
         registry.register(MESSAGE_SEND, handlers.send_message)
+        registry.register(MESSAGE_RECALL, handlers.recall_message)
         registry.register(FORWARD_SCENE_SEND, handlers.send_forward_scene)
         if scheduler is not None:
             registry.register(REMINDER_CREATE, handlers.create_reminder)
@@ -360,6 +362,24 @@ class _OneBotHandlers:
             raise ValueError("message must be a string")
         params: dict[str, object] = {"group_id": group_id, "message": message}
         return await self._mutating_action("send_group_msg", params)
+
+    async def recall_message(
+        self,
+        context: ToolContext,
+        arguments: Mapping[str, object],
+    ) -> object:
+        group_id = _numeric_id(context.target_group_id, "group_id")
+        message_id = _numeric_id(arguments["message_id"], "message_id")
+        response = await self._client.call_action("get_msg", message_id=message_id)
+        if _message_group_id(response) != group_id:
+            raise PermissionError("quoted message is outside the current group")
+        result = await self._mutating_action("delete_msg", {"message_id": message_id})
+        dry_run = isinstance(result, Mapping) and result.get("dry_run") is True
+        return {
+            "message_id": str(message_id),
+            "recalled": not dry_run,
+            "result": result,
+        }
 
     async def send_forward_scene(
         self,
@@ -786,6 +806,15 @@ def _extract_message_list(response: object) -> list[Mapping[str, object]]:
     if not isinstance(candidate, list):
         raise ValueError("OneBot returned no message history")
     return [item for item in candidate if isinstance(item, Mapping)]
+
+
+def _message_group_id(response: object) -> int:
+    candidate: object = response
+    if isinstance(response, Mapping) and isinstance(response.get("data"), Mapping):
+        candidate = response["data"]
+    if not isinstance(candidate, Mapping):
+        raise ValueError("OneBot returned no message")
+    return _numeric_id(candidate.get("group_id"), "message.group_id")
 
 
 def _order_recent_messages(

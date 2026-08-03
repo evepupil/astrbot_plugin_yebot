@@ -72,6 +72,14 @@ MESSAGE_SEND = ToolDefinition(
     risk=ToolRisk.MEDIUM,
 )
 
+MESSAGE_RECALL = ToolDefinition(
+    name="message.recall",
+    description="Recall one quoted message from the current group.",
+    permission="message.recall",
+    parameters=(ParameterSpec("message_id", ParameterType.INTEGER, minimum=1),),
+    risk=ToolRisk.MEDIUM,
+)
+
 FORWARD_SCENE_SEND = ToolDefinition(
     name="message.forward_scene",
     description=(
@@ -298,6 +306,7 @@ TOOL_CATALOG: tuple[ToolDefinition, ...] = (
     GROUP_MUTE_MEMBER,
     GROUP_UNMUTE_MEMBER,
     MESSAGE_SEND,
+    MESSAGE_RECALL,
     FORWARD_SCENE_SEND,
     REMINDER_CREATE,
     REMINDER_LIST,

@@ -9,6 +9,7 @@ import os
 from collections.abc import Coroutine, Mapping
 from contextlib import suppress
 from contextvars import ContextVar
+from dataclasses import replace
 from datetime import datetime
 from typing import Any
 
@@ -74,6 +75,7 @@ try:
         StickerStore,
         extract_image_components,
     )
+    from .yebot.runtime.targeting import TargetResolution, TargetResolver, TargetStatus
     from .yebot.runtime.tools import ToolContext, ToolResult, ToolResultCode
     from .yebot.runtime.tools.onebot import (
         OneBotActionClient,
@@ -136,6 +138,7 @@ except ImportError:
         StickerStore,
         extract_image_components,
     )
+    from yebot.runtime.targeting import TargetResolution, TargetResolver, TargetStatus
     from yebot.runtime.tools import ToolContext, ToolResult, ToolResultCode
     from yebot.runtime.tools.onebot import (
         OneBotActionClient,
@@ -226,6 +229,8 @@ YeBot 工具选择规则：
   member.user_id 传给禁言工具。不要自己固定挑列表第一人，也不要用“我不乱禁言”替代执行。
 - 用户明确要求踢人、禁言或解禁时，At 不是必需条件；优先根据当前对话中最近的
   人名、QQ 号、回复对象和“他/刚才那个人”等指代判断目标，再调用对应工具。
+- 调用成员工具时，把用户原话中的对象放进 target 参数；不需要先知道 QQ 号。工具会验证
+  QQ 号、群名片/昵称和最近发言人，只在目标唯一时执行。不要编造 user_id。
   对“最近”“随机”这类明确授权的选择意图，先用候选查询工具继续完成目标，不要因为目标
   不是一个固定 QQ 号就拒绝。禁言没有给出时长时，由模型自己选择合理的秒数并直接执行，
   不要追问时长；若工具调用时仍省略，工具使用 60 秒兜底。
@@ -234,7 +239,8 @@ YeBot 工具选择规则：
 - 工具成功后，以工具返回的 `params.user_id` 和实际状态为准回复，不能再说“不知道目标”。
 - 用户要求向当前群发送指定内容时，调用 yebot_message_send；普通聊天回复不要调用它。
 - 只有主人明确要求创作“虚构转发对话”时，调用 yebot_forward_scene_send。当前消息中被 @ 的
-  对象应传为 target_user_id；nodes 必须生成 3 到 12 条自然的短对话，每项只有 speaker 和
+  对象、名字、回复对象或指代应传为 target；nodes 必须生成 3 到 12 条自然的短对话，
+  每项只有 speaker 和
   content 两个文本字段，目标人物使用 speaker=target。工具会读取当前群昵称，并为每个节点
   追加 `（虚构）`。不得试图自行添加、删除或隐藏该标识，也不得构造 QQ 号、CQ 码、图片或
   其他消息段。
@@ -248,6 +254,8 @@ YeBot 工具选择规则：
 - 用户明确确认后，调用 yebot_confirm_action；确认编号只能由原操作者在原群使用一次。
 - 用户要求稍后提醒、查看提醒或管理提醒时，使用对应的 yebot_reminder_* 工具；
   普通回复不要创建任务。
+- 给某人创建提醒时，把人名、回复对象或“他”等指代放入 reminder 的 target 参数；工具会先
+  解析为唯一成员，再在到期消息中 @ 该成员。
 - 主人明确说“提醒/定时提醒”并给出时间和内容时，代码侧已经直达创建提醒；不要再次调用
   提醒工具，也不要用人设拒绝。结果失败时如实说明状态。
 - 只有主人明确要求读取本地文件或网页时，才调用 yebot_file_read 或 yebot_web_fetch。
@@ -906,12 +914,33 @@ class YeBot(Star):
 
         result: ToolResult | None = None
         if parsed.intent is not None:
+            intent = parsed.intent
+            if intent.target_user_id is None and intent.target_hint:
+                resolution = await self._resolve_member_target(
+                    event,
+                    intent.target_hint,
+                )
+                if not resolution.resolved:
+                    await self._send_owner_target_resolution(event, resolution)
+                    set_extra = getattr(event, "set_extra", None)
+                    if callable(set_extra):
+                        set_extra("yebot.reminder.prehandled", True)
+                    self._stop_direct_event(event)
+                    return True
+                intent = replace(
+                    intent,
+                    target_user_id=resolution.user_id,
+                    message=(
+                        f"[CQ:at,qq={resolution.user_id}] {intent.message.strip()}"
+                    ),
+                )
+                parsed = replace(parsed, intent=intent)
             result = await self.execute_tool(
                 event,
                 "reminder.create",
                 {
-                    "delay_seconds": parsed.intent.delay_seconds,
-                    "message": parsed.intent.message,
+                    "delay_seconds": intent.delay_seconds,
+                    "message": intent.message,
                 },
                 request_id=_request_id(event),
             )
@@ -921,6 +950,22 @@ class YeBot(Star):
             set_extra("yebot.reminder.prehandled", True)
         self._stop_direct_event(event)
         return True
+
+    async def _send_owner_target_resolution(
+        self,
+        event: AstrMessageEvent,
+        resolution: TargetResolution,
+    ) -> None:
+        """Explain a failed direct reminder target without entering the LLM."""
+
+        if resolution.status is TargetStatus.AMBIGUOUS:
+            choices = "、".join(
+                candidate.display_name for candidate in resolution.candidates[:5]
+            )
+            text = f"提醒没有创建：目标不唯一（{choices or '多人同名'}）"
+        else:
+            text = "提醒没有创建：没有找到目标，请给名字、QQ 号、回复或 @"
+        await event.send(MessageChain([Plain(text)]))
 
     async def _send_owner_reminder_result(
         self,
@@ -1044,24 +1089,42 @@ class YeBot(Star):
 
         return await self._agent_orchestrator.run(plan, tool_executor=invoke)
 
-    def _resolve_mentioned_target(
+    async def _resolve_member_target(
         self,
         event: AstrMessageEvent,
-        user_id: str,
-    ) -> str:
-        """Prefer the single explicit non-bot At target in the current message."""
+        target_hint: str,
+    ) -> TargetResolution:
+        """Resolve one target from event structure and natural-language context."""
 
         raw_event = getattr(event.message_obj, "raw_message", None)
         if not isinstance(raw_event, Mapping):
-            return user_id
-        bot_id = event.get_self_id().strip() or self._bot_id
-        mentioned_ids = extract_mentioned_user_ids(
-            raw_event,
-            excluded_ids=(bot_id,),
+            return TargetResolution(TargetStatus.UNRESOLVED)
+        identity = parse_identity(raw_event, self._owner_ids)
+        return await TargetResolver(resolve_event_action_client(event)).resolve(
+            event,
+            target_hint=target_hint.strip() or _current_message_text(event),
+            actor_id=identity.user_id,
+            bot_id=event.get_self_id().strip() or self._bot_id,
         )
-        if len(mentioned_ids) > 1:
-            raise ValueError("multiple target mentions")
-        return mentioned_ids[0] if mentioned_ids else user_id
+
+    @staticmethod
+    def _encode_target_resolution(resolution: TargetResolution) -> str:
+        """Return a tool result that lets the Agent ask for useful clarification."""
+
+        return json.dumps(
+            {
+                "status": "failed",
+                "summary": resolution.summary,
+                "candidates": [
+                    {
+                        "user_id": candidate.user_id,
+                        "name": candidate.display_name,
+                    }
+                    for candidate in resolution.candidates
+                ],
+            },
+            ensure_ascii=False,
+        )
 
     async def _run_subagent(
         self,
@@ -1162,7 +1225,8 @@ class YeBot(Star):
     async def llm_group_kick_member(
         self,
         event: AstrMessageEvent,
-        user_id: str,
+        user_id: str = "",
+        target: str = "",
         reason: str = "",
     ) -> str:
         """请求移出当前群的一名成员。
@@ -1171,11 +1235,14 @@ class YeBot(Star):
             user_id(string): 要操作的 QQ 号
             reason(string): 操作原因
         """
+        resolution = await self._resolve_member_target(event, target or user_id)
+        if not resolution.resolved:
+            return self._encode_target_resolution(resolution)
         result = await self._run_single_tool(
             event,
             "group.kick_member",
             {
-                "user_id": self._resolve_mentioned_target(event, user_id),
+                "user_id": resolution.user_id,
                 "reason": reason,
             },
         )
@@ -1185,7 +1252,8 @@ class YeBot(Star):
     async def llm_group_mute_member(
         self,
         event: AstrMessageEvent,
-        user_id: str,
+        user_id: str = "",
+        target: str = "",
         duration_seconds: float | None = None,
         reason: str = "",
     ) -> str:
@@ -1203,11 +1271,14 @@ class YeBot(Star):
         )
         if isinstance(duration, float) and duration.is_integer():
             duration = int(duration)
+        resolution = await self._resolve_member_target(event, target or user_id)
+        if not resolution.resolved:
+            return self._encode_target_resolution(resolution)
         result = await self._run_single_tool(
             event,
             "group.mute_member",
             {
-                "user_id": self._resolve_mentioned_target(event, user_id),
+                "user_id": resolution.user_id,
                 "duration_seconds": duration,
                 "reason": reason,
             },
@@ -1218,17 +1289,21 @@ class YeBot(Star):
     async def llm_group_unmute_member(
         self,
         event: AstrMessageEvent,
-        user_id: str,
+        user_id: str = "",
+        target: str = "",
     ) -> str:
         """解除当前群一名成员的禁言。
 
         Args:
             user_id(string): 要操作的 QQ 号
         """
+        resolution = await self._resolve_member_target(event, target or user_id)
+        if not resolution.resolved:
+            return self._encode_target_resolution(resolution)
         result = await self._run_single_tool(
             event,
             "group.unmute_member",
-            {"user_id": self._resolve_mentioned_target(event, user_id)},
+            {"user_id": resolution.user_id},
         )
         return self._encode_run(result)
 
@@ -1252,6 +1327,7 @@ class YeBot(Star):
         event: AstrMessageEvent,
         nodes: list[dict[str, str]],
         target_user_id: str = "",
+        target: str = "",
     ) -> str:
         """发送主人要求的、每个节点均标为虚构的合并转发对话。
 
@@ -1261,14 +1337,17 @@ class YeBot(Star):
             target_user_id(string): 被 @ 的目标 QQ 号；存在唯一目标 At 时优先使用它。
         """
 
+        resolution = await self._resolve_member_target(
+            event,
+            target or target_user_id,
+        )
+        if not resolution.resolved:
+            return self._encode_target_resolution(resolution)
         result = await self._run_single_tool(
             event,
             "message.forward_scene",
             {
-                "target_user_id": self._resolve_mentioned_target(
-                    event,
-                    target_user_id,
-                ),
+                "target_user_id": resolution.user_id,
                 "nodes": nodes,
             },
         )
@@ -1402,12 +1481,18 @@ class YeBot(Star):
         event: AstrMessageEvent,
         delay_seconds: float,
         message: str,
+        target: str = "",
     ) -> str:
         """在当前群创建一条延时提醒。"""
 
         delay: object = delay_seconds
         if isinstance(delay_seconds, float) and delay_seconds.is_integer():
             delay = int(delay_seconds)
+        if target.strip():
+            resolution = await self._resolve_member_target(event, target)
+            if not resolution.resolved:
+                return self._encode_target_resolution(resolution)
+            message = f"[CQ:at,qq={resolution.user_id}] {message.strip()}"
         result = await self._run_single_tool(
             event,
             "reminder.create",

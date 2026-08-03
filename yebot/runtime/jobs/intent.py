@@ -14,6 +14,7 @@ class ReminderIntent:
     delay_seconds: int
     message: str
     target_user_id: str | None = None
+    target_hint: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,6 +113,7 @@ def parse_reminder_request(
     target_user_id = target_ids[0] if target_ids else None
 
     target_text = _MENTION_PATTERN.sub(" ", target_text)
+    target_hint = target_text.strip()
     message = _MENTION_PATTERN.sub(" ", message)
     message = _TARGET_WORD_PATTERN.sub("", message.strip())
     if not message:
@@ -120,7 +122,7 @@ def parse_reminder_request(
     if target_user_id is not None:
         message = f"[CQ:at,qq={target_user_id}] {message}"
     return ReminderParse(
-        ReminderIntent(delay, message, target_user_id),
+        ReminderIntent(delay, message, target_user_id, target_hint),
     )
 
 

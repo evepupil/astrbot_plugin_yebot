@@ -22,6 +22,15 @@ def test_parse_reminder_with_at_target_before_time() -> None:
     assert parsed.intent.message == "[CQ:at,qq=42] 喝水"
 
 
+def test_parse_reminder_retains_non_at_target_phrase_for_resolution() -> None:
+    parsed = parse_reminder_request("提醒小李 30秒后喝水")
+
+    assert parsed.intent is not None
+    assert parsed.intent.target_user_id is None
+    assert parsed.intent.target_hint == "小李"
+    assert parsed.intent.message == "喝水"
+
+
 def test_parse_reminder_supports_time_before_command_and_long_units() -> None:
     parsed = parse_reminder_request("过1小时后提醒某人 散步")
 

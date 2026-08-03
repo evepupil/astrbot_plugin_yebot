@@ -51,7 +51,13 @@ try:
         is_group_image_request_addressed,
         resolve_reply_image,
     )
-    from .yebot.runtime.jobs import Job, JobScheduler, JsonJobStore
+    from .yebot.runtime.jobs import (
+        Job,
+        JobScheduler,
+        JsonJobStore,
+        ReminderParse,
+        parse_reminder_request,
+    )
     from .yebot.runtime.memory import (
         MemoryService,
         SQLiteMemoryStore,
@@ -107,7 +113,13 @@ except ImportError:
         is_group_image_request_addressed,
         resolve_reply_image,
     )
-    from yebot.runtime.jobs import Job, JobScheduler, JsonJobStore
+    from yebot.runtime.jobs import (
+        Job,
+        JobScheduler,
+        JsonJobStore,
+        ReminderParse,
+        parse_reminder_request,
+    )
     from yebot.runtime.memory import (
         MemoryService,
         SQLiteMemoryStore,
@@ -169,6 +181,16 @@ def _message_text(event: AstrMessageEvent) -> str:
     if isinstance(reply_context, str) and reply_context.strip():
         return f"{current}\n{reply_context}".strip()[:6400]
     return current
+
+
+def _current_message_text(event: AstrMessageEvent) -> str:
+    """Read only the current message, excluding fetched reply context."""
+
+    message_obj = getattr(event, "message_obj", None)
+    message_str = getattr(message_obj, "message_str", "") or getattr(
+        event, "message_str", ""
+    )
+    return str(message_str).strip()[:4000]
 
 
 def _request_id(event: AstrMessageEvent) -> str:
@@ -808,6 +830,9 @@ class YeBot(Star):
         reply_context = await self._ensure_reply_context(event)
         if reply_context and reply_context not in request.prompt:
             request.prompt = f"{request.prompt.rstrip()}\n\n{reply_context}"
+        current_message_text = _current_message_text(event)
+        if await self._prehandle_owner_reminder(event, current_message_text):
+            return
         message_text = _message_text(event)
         system_prompt = request.system_prompt.rstrip()
         additions: list[str] = []
@@ -840,6 +865,91 @@ class YeBot(Star):
                     additions.append(context)
         if additions:
             request.system_prompt = f"{system_prompt}\n\n" + "\n\n".join(additions)
+
+    async def _prehandle_owner_reminder(
+        self,
+        event: AstrMessageEvent,
+        message_text: str,
+    ) -> bool:
+        """Execute an explicit owner's reminder command before the LLM runs."""
+
+        raw_event = getattr(event.message_obj, "raw_message", None)
+        if not isinstance(raw_event, Mapping):
+            return False
+        identity = parse_identity(raw_event, self._owner_ids)
+        if identity.user_id not in self._owner_ids:
+            return False
+
+        get_extra = getattr(event, "get_extra", None)
+        if callable(get_extra) and get_extra("yebot.reminder.prehandled", False):
+            self._stop_direct_event(event)
+            return True
+
+        self_id = event.get_self_id().strip() or self._bot_id
+        mentioned_ids = extract_mentioned_user_ids(
+            raw_event,
+            excluded_ids=(self_id,),
+        )
+        parsed = parse_reminder_request(
+            message_text,
+            mentioned_user_ids=mentioned_ids,
+        )
+        if not parsed.is_request:
+            return False
+
+        result: ToolResult | None = None
+        if parsed.intent is not None:
+            result = await self.execute_tool(
+                event,
+                "reminder.create",
+                {
+                    "delay_seconds": parsed.intent.delay_seconds,
+                    "message": parsed.intent.message,
+                },
+                request_id=_request_id(event),
+            )
+        await self._send_owner_reminder_result(event, parsed, result)
+        set_extra = getattr(event, "set_extra", None)
+        if callable(set_extra):
+            set_extra("yebot.reminder.prehandled", True)
+        self._stop_direct_event(event)
+        return True
+
+    async def _send_owner_reminder_result(
+        self,
+        event: AstrMessageEvent,
+        parsed: ReminderParse,
+        result: ToolResult | None,
+    ) -> None:
+        if parsed.intent is None:
+            messages = {
+                "time_missing": "请补充提醒时间，例如“10分钟后提醒我开会”",
+                "time_invalid": "提醒时间没有读懂，请使用秒、分钟、小时、天或周",
+                "time_out_of_range": "提醒时间需在1秒到30天之间",
+                "message_missing": "请补充提醒内容",
+                "multiple_targets": "一次只能指定一个提醒对象",
+                "syntax_invalid": "提醒格式没有读懂，请把时间和内容说清楚",
+            }
+            text = f"{messages.get(parsed.error or '', '提醒格式没有读懂')}"
+        elif result is None:
+            text = "提醒没有创建：内部结果缺失"
+        elif result.ok:
+            intent = parsed.intent
+            target = f"@{intent.target_user_id} " if intent.target_user_id else ""
+            message = intent.message
+            if intent.target_user_id:
+                message = message.removeprefix(
+                    f"[CQ:at,qq={intent.target_user_id}]"
+                ).strip()
+            text = f"已设置提醒：{target}{message}（{intent.delay_seconds}秒后）"
+        else:
+            text = f"提醒没有创建：{result.error or result.code.value}"
+        await event.send(MessageChain([Plain(text)]))
+
+    @staticmethod
+    def _stop_direct_event(event: AstrMessageEvent) -> None:
+        event.should_call_llm(False)
+        event.stop_event()
 
     async def _prehandle_memory_write(
         self,

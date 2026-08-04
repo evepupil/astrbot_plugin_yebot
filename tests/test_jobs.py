@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 
 from yebot.domain.identity import Identity, UserRole
 from yebot.runtime.jobs import JobScheduler, JobStatus, JsonJobStore, MemoryJobStore
+from yebot.runtime.jobs.native_access import native_cron_job_accessible
 
 
 def identity(user_id: str = "42", group_id: str = "100") -> Identity:
@@ -38,6 +40,42 @@ def test_reminder_management_stays_within_current_group() -> None:
     assert scheduler.list_for_group(other_group_member) == ()
     with pytest.raises(KeyError):
         scheduler.cancel(other_group_member, job.job_id)
+
+
+def test_native_cron_group_tasks_are_shared_but_private_tasks_are_not() -> None:
+    group_job = SimpleNamespace(
+        payload={
+            "session": "default:GroupMessage:100",
+            "sender_id": "77",
+        }
+    )
+    private_job = SimpleNamespace(
+        payload={
+            "session": "default:FriendMessage:77",
+            "sender_id": "77",
+        }
+    )
+
+    assert native_cron_job_accessible(
+        group_job,
+        "default:GroupMessage:100",
+        "43",
+    )
+    assert not native_cron_job_accessible(
+        group_job,
+        "default:GroupMessage:101",
+        "43",
+    )
+    assert native_cron_job_accessible(
+        private_job,
+        "default:FriendMessage:77",
+        "77",
+    )
+    assert not native_cron_job_accessible(
+        private_job,
+        "default:FriendMessage:77",
+        "43",
+    )
 
 
 def test_due_job_retries_with_backoff_then_completes() -> None:

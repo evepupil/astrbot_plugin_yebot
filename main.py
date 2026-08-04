@@ -59,6 +59,7 @@ try:
         JobScheduler,
         JsonJobStore,
         ReminderParse,
+        install_native_cron_group_sharing,
         parse_reminder_request,
     )
     from .yebot.runtime.memory import (
@@ -136,6 +137,7 @@ except ImportError:
         JobScheduler,
         JsonJobStore,
         ReminderParse,
+        install_native_cron_group_sharing,
         parse_reminder_request,
     )
     from yebot.runtime.memory import (
@@ -394,6 +396,10 @@ class YeBot(Star):
 
     def __init__(self, context: Context, config: dict[str, Any] | None = None) -> None:
         super().__init__(context, config)
+        if install_native_cron_group_sharing():
+            logger.info("YeBot native AstrBot cron management enabled: group-shared")
+        else:
+            logger.warning("YeBot could not install native AstrBot cron compatibility")
         values: Mapping[str, Any] = config or {}
         configured_owner_ids = normalize_id_list(values.get("owner_qq_ids"))
         astrbot_config = context.get_config()

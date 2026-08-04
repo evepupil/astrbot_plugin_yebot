@@ -78,9 +78,14 @@ try:
         parse_response_mode_intent,
     )
     from .yebot.runtime.stickers import (
+        STICKER_IMAGE_REFS_EXTRA,
+        HistoryImageSource,
         NativeStickerClient,
+        StickerImageRef,
         StickerService,
         StickerStore,
+        enrich_history_image_source,
+        extract_history_image_sources,
         extract_image_components,
     )
     from .yebot.runtime.targeting import TargetResolution, TargetResolver, TargetStatus
@@ -150,9 +155,14 @@ except ImportError:
         parse_response_mode_intent,
     )
     from yebot.runtime.stickers import (
+        STICKER_IMAGE_REFS_EXTRA,
+        HistoryImageSource,
         NativeStickerClient,
+        StickerImageRef,
         StickerService,
         StickerStore,
+        enrich_history_image_source,
+        extract_history_image_sources,
         extract_image_components,
     )
     from yebot.runtime.targeting import TargetResolution, TargetResolver, TargetStatus
@@ -236,12 +246,37 @@ def _has_yebot_tools(request: ProviderRequest) -> bool:
 _BACKGROUND_TOOL_MODE: ContextVar[str] = ContextVar(
     "yebot_background_tool_mode", default=""
 )
+_BACKGROUND_TOOL_MODES_EXTRA = "yebot.background_tool_modes"
 _AUTO_STICKER_SEND_STATE: ContextVar[dict[str, bool] | None] = ContextVar(
     "yebot_auto_sticker_send_state", default=None
 )
 
 _DEFAULT_MUTE_DURATION_SECONDS = 60
 _RECALL_CANDIDATE_IDS_EXTRA = "yebot.recall.candidate_ids"
+
+
+def _set_background_tool_mode(event: object, mode: str, enabled: bool) -> None:
+    """Propagate the background-tool allowance across AstrBot tool tasks."""
+
+    get_extra = getattr(event, "get_extra", None)
+    set_extra = getattr(event, "set_extra", None)
+    if not callable(get_extra) or not callable(set_extra):
+        return
+    current = get_extra(_BACKGROUND_TOOL_MODES_EXTRA, ())
+    modes = set(current) if isinstance(current, (list, tuple, set)) else set()
+    if enabled:
+        modes.add(mode)
+    else:
+        modes.discard(mode)
+    set_extra(_BACKGROUND_TOOL_MODES_EXTRA, tuple(sorted(modes)))
+
+
+def _event_allows_background_tools(event: object) -> bool:
+    get_extra = getattr(event, "get_extra", None)
+    if not callable(get_extra):
+        return False
+    modes = get_extra(_BACKGROUND_TOOL_MODES_EXTRA, ())
+    return isinstance(modes, (list, tuple, set)) and bool(modes)
 
 
 _AGENT_TOOL_GUIDANCE = """\
@@ -282,6 +317,8 @@ YeBot 工具选择规则：
   提交 should_collect、asset_kind、reaction_ready、confidence、图片含义和简短标签；
   即使决定不收藏也要明确提交分类决定。不要向用户要求说出工具名。表情库由所有群共享，
   重复图片不会重复保存。
+- 用户明确说收藏“上面/之前/刚才”的几张图片或表情包，而当前消息没有附图时，调用
+  yebot_sticker_collect_recent 读取当前群最近图片；不要要求用户把图片重新发一遍。
 - 只有主人要求查看或清理表情库时，才调用 yebot_sticker_list 或
   yebot_sticker_delete。删除前先查询列表或搜索确认 sticker_id，不得编造 ID；删除仅
   影响 YeBot 共享库，不代表删除 QQ 客户端个人收藏。
@@ -803,6 +840,85 @@ class YeBot(Star):
             )
         return ""
 
+    async def _load_recent_sticker_image_refs(
+        self,
+        event: AstrMessageEvent,
+        limit: int,
+    ) -> tuple[StickerImageRef, ...]:
+        """Fetch recent group images for an explicit historical-collection request."""
+
+        raw_event = getattr(event.message_obj, "raw_message", None)
+        if not isinstance(raw_event, Mapping):
+            return ()
+        group_id = normalize_id(raw_event.get("group_id"))
+        if not group_id.isdecimal():
+            return ()
+        client = resolve_event_action_client(event)
+        if client is None:
+            return ()
+        bounded_limit = max(1, min(limit, 12))
+        try:
+            response = await client.call_action(
+                "get_group_msg_history",
+                group_id=int(group_id),
+                count=max(20, min(bounded_limit * 4, 50)),
+            )
+        except Exception as error:
+            logger.warning(
+                "YeBot historical sticker lookup failed error=%s",
+                type(error).__name__,
+            )
+            return ()
+        sources = extract_history_image_sources(
+            response,
+            current_message_id=_request_id(event),
+            max_images=bounded_limit,
+        )
+        refs: list[StickerImageRef] = []
+        for source in sources:
+            resolved = source
+            if not resolved.has_preview and resolved.file:
+                try:
+                    image_response = await client.call_action(
+                        "get_image", file=resolved.file
+                    )
+                    resolved = enrich_history_image_source(resolved, image_response)
+                except Exception as error:
+                    logger.debug(
+                        "YeBot historical sticker image lookup failed error=%s",
+                        type(error).__name__,
+                    )
+            component = self._history_image_component(resolved)
+            if component is not None:
+                refs.append(
+                    StickerImageRef(
+                        component,
+                        source_message_id=resolved.message_id,
+                        source_user_id=resolved.source_user_id,
+                    )
+                )
+        logger.info(
+            "YeBot historical sticker images loaded requested=%s available=%s",
+            bounded_limit,
+            len(refs),
+        )
+        return tuple(refs)
+
+    @staticmethod
+    def _history_image_component(source: HistoryImageSource) -> object | None:
+        if source.base64_data:
+            encoded = source.base64_data
+            if encoded.startswith("data:") and "," in encoded:
+                encoded = encoded.split(",", 1)[1]
+            if not encoded.startswith("base64://"):
+                encoded = f"base64://{encoded}"
+            return Image.fromBase64(encoded)
+        if source.url.startswith(("http://", "https://")):
+            return Image.fromURL(source.url)
+        if source.path:
+            return Image.fromFileSystem(source.path)
+        return None
+
     async def _run_restricted_sticker_agent(
         self,
         event: AstrMessageEvent,
@@ -830,6 +946,7 @@ class YeBot(Star):
                 event.unified_msg_origin
             )
             mode_token = _BACKGROUND_TOOL_MODE.set(mode)
+            _set_background_tool_mode(event, mode, True)
             state = {"sent": False} if mode == "sticker_send" else {"collected": False}
             state_token = _AUTO_STICKER_SEND_STATE.set(state)
             try:
@@ -850,6 +967,7 @@ class YeBot(Star):
                 )
             finally:
                 _AUTO_STICKER_SEND_STATE.reset(state_token)
+                _set_background_tool_mode(event, mode, False)
                 _BACKGROUND_TOOL_MODE.reset(mode_token)
             return str(getattr(response, "completion_text", "")).strip(), dict(state)
         except Exception as error:
@@ -898,6 +1016,84 @@ class YeBot(Star):
                 state.get("collected", False),
                 bool(caption),
             )
+
+    @filter.llm_tool(name="yebot_sticker_collect_recent")
+    async def llm_sticker_collect_recent(
+        self,
+        event: AstrMessageEvent,
+        limit: float = 6,
+    ) -> str:
+        """Collect explicitly requested images from recent group history."""
+
+        bounded_limit = max(1, min(int(limit), 12))
+        refs = await self._load_recent_sticker_image_refs(event, bounded_limit)
+        if not refs:
+            return json.dumps(
+                {
+                    "status": "success",
+                    "summary": "no historical images available",
+                    "result": {"candidate_images": 0, "collected": False},
+                },
+                ensure_ascii=False,
+            )
+
+        get_extra = getattr(event, "get_extra", None)
+        set_extra = getattr(event, "set_extra", None)
+        previous = (
+            get_extra(STICKER_IMAGE_REFS_EXTRA, ()) if callable(get_extra) else ()
+        )
+        if not callable(set_extra):
+            return json.dumps(
+                {
+                    "status": "failed",
+                    "summary": "event cannot carry historical images",
+                },
+                ensure_ascii=False,
+            )
+        set_extra(STICKER_IMAGE_REFS_EXTRA, refs)
+        state: dict[str, bool] = {}
+        try:
+            async with self._sticker_agent_semaphore:
+                image_urls = await self._sticker_service.image_urls(event)
+                caption = await self._describe_sticker_images(event, image_urls)
+                caption_hint = (
+                    f"\nAstrBot image description (reference only): {caption}\n"
+                    if caption
+                    else ""
+                )
+                _, state = await self._run_restricted_sticker_agent(
+                    event,
+                    prompt=(
+                        "The user explicitly asked to collect some of the images "
+                        "above or earlier in this group. Inspect every supplied "
+                        "historical image and call yebot_sticker_consider exactly "
+                        "once per image. Collect only standalone memes, reaction "
+                        "stickers, or cartoon reactions with confidence at least "
+                        "0.90. Reject ordinary photos, screenshots, documents, and "
+                        "unclear images. Use the image_index matching the supplied "
+                        "image order. Do not ask the user to resend the images."
+                        + caption_hint
+                    ),
+                    image_urls=image_urls,
+                    allowed_tools=("yebot_sticker_consider",),
+                    mode="sticker_collect_history",
+                )
+        finally:
+            set_extra(
+                STICKER_IMAGE_REFS_EXTRA,
+                previous if isinstance(previous, (list, tuple)) else (),
+            )
+        return json.dumps(
+            {
+                "status": "success",
+                "summary": "historical sticker collection finished",
+                "result": {
+                    "candidate_images": len(refs),
+                    "collected": state.get("collected", False),
+                },
+            },
+            ensure_ascii=False,
+        )
 
     async def _auto_send_sticker(self, event: AstrMessageEvent) -> None:
         async with self._sticker_send_semaphore:
@@ -1292,7 +1488,8 @@ class YeBot(Star):
             summary,
             requested_tool=tool_name,
             tool_arguments=arguments,
-            allow_unmentioned=bool(_BACKGROUND_TOOL_MODE.get()),
+            allow_unmentioned=bool(_BACKGROUND_TOOL_MODE.get())
+            or _event_allows_background_tools(event),
         )
         plan = self._agent_planner.build(route, plan_id=summary.request_id)
         if route.kind is RouteKind.IGNORE:

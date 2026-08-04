@@ -7,6 +7,7 @@ import inspect
 import logging
 import mimetypes
 from collections.abc import Mapping
+from dataclasses import dataclass
 from math import isfinite
 from pathlib import Path
 
@@ -23,24 +24,42 @@ _COLLECTIBLE_STICKER_KINDS = frozenset(
         StickerKind.CARTOON_REACTION,
     }
 )
+STICKER_IMAGE_REFS_EXTRA = "yebot.sticker.image_refs"
+
+
+@dataclass(frozen=True, slots=True)
+class StickerImageRef:
+    """An image component plus its source message when it came from history."""
+
+    component: object
+    source_message_id: str = ""
+    source_user_id: str = ""
 
 
 def extract_image_components(event: object) -> tuple[object, ...]:
     """Return image components without importing AstrBot internals in domain code."""
 
+    return tuple(ref.component for ref in extract_image_refs(event))
+
+
+def extract_image_refs(event: object) -> tuple[StickerImageRef, ...]:
+    """Return current-event images or explicitly attached historical images."""
+
     get_messages = getattr(event, "get_messages", None)
     messages = get_messages() if callable(get_messages) else ()
-    if not isinstance(messages, (list, tuple)):
+    if isinstance(messages, (list, tuple)):
+        result = [
+            StickerImageRef(component)
+            for component in messages
+            if _is_image_component(component)
+        ]
+        if result:
+            return tuple(result)
+    get_extra = getattr(event, "get_extra", None)
+    historical = get_extra(STICKER_IMAGE_REFS_EXTRA, ()) if callable(get_extra) else ()
+    if not isinstance(historical, (list, tuple)):
         return ()
-    result: list[object] = []
-    for component in messages:
-        component_type = str(getattr(component, "type", "")).lower()
-        if (
-            component_type in {"image", "componenttype.image"}
-            or type(component).__name__.lower() == "image"
-        ):
-            result.append(component)
-    return tuple(result)
+    return tuple(item for item in historical if isinstance(item, StickerImageRef))
 
 
 class StickerService:
@@ -66,7 +85,8 @@ class StickerService:
         """Resolve current image components into provider-readable local paths."""
 
         result: list[str] = []
-        for component in extract_image_components(event):
+        for ref in extract_image_refs(event):
+            component = ref.component
             path_method = getattr(component, "convert_to_file_path", None)
             if callable(path_method):
                 candidate = path_method()
@@ -123,14 +143,15 @@ class StickerService:
         index = arguments.get("image_index", 0)
         if not isinstance(index, int) or isinstance(index, bool) or index < 0:
             raise ValueError("image_index must be a non-negative integer")
-        components = extract_image_components(event)
-        if index >= len(components):
+        refs = extract_image_refs(event)
+        if index >= len(refs):
             return {
                 "collected": False,
                 "reason": "image_not_found",
-                "image_count": len(components),
+                "image_count": len(refs),
             }
-        blob, suffix, media_type = await _read_image(components[index])
+        ref = refs[index]
+        blob, suffix, media_type = await _read_image(ref.component)
         tags = arguments.get("tags", [])
         if not isinstance(tags, list):
             raise ValueError("tags must be an array")
@@ -140,8 +161,8 @@ class StickerService:
             meaning=meaning,
             tags=(str(tag) for tag in tags if isinstance(tag, str)),
             group_id=identity.group_id,
-            source_message_id=_event_message_id(event),
-            source_user_id=identity.user_id,
+            source_message_id=ref.source_message_id or _event_message_id(event),
+            source_user_id=ref.source_user_id or identity.user_id,
             asset_kind=asset_kind,
             confidence=confidence,
             suffix=suffix,
@@ -286,6 +307,13 @@ async def _read_image(component: object) -> tuple[bytes, str, str]:
 def _event_message_id(event: object) -> str:
     message_obj = getattr(event, "message_obj", None)
     return str(getattr(message_obj, "message_id", "")).strip()[:128]
+
+
+def _is_image_component(component: object) -> bool:
+    component_type = str(getattr(component, "type", "")).lower()
+    return component_type in {"image", "componenttype.image"} or type(
+        component
+    ).__name__.lower() == "image"
 
 
 def _sticker_kind(value: object) -> StickerKind:

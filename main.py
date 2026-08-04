@@ -2355,12 +2355,13 @@ class YeBot(Star):
 
         if not self._image_generation_enabled:
             return False
-        message_text = _message_text(event)
+        message_text = _current_message_text(event)
         prompt = extract_image_prompt(message_text)
         edit_prompt = extract_image_edit_prompt(message_text)
         if prompt is None and edit_prompt is None:
             return False
 
+        has_reply_reference = bool(extract_reply_references(event))
         reference_image: ReplyImage | None = None
         try:
             reference_image = await resolve_reply_image(
@@ -2369,7 +2370,7 @@ class YeBot(Star):
                 max_bytes=self._image_reference_max_bytes,
             )
         except ImageGenerationError as error:
-            if edit_prompt is None:
+            if not has_reply_reference:
                 logger.debug(
                     "YeBot image reference unavailable message=%s error=%s",
                     _request_id(event),
@@ -2377,7 +2378,7 @@ class YeBot(Star):
                 )
             else:
                 logger.warning(
-                    "YeBot image edit reference failed message=%s error=%s",
+                    "YeBot image reference failed message=%s error=%s",
                     _request_id(event),
                     str(error),
                 )

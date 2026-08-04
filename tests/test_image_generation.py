@@ -17,6 +17,8 @@ def test_extract_image_prompt_from_chinese_requests() -> None:
     assert extract_image_prompt("画一只戴墨镜的猫") == "一只戴墨镜的猫"
     assert extract_image_prompt("请帮我生成一张赛博朋克城市") == "赛博朋克城市"
     assert extract_image_prompt("[CQ:at,qq=123] 画海边的日落") == "海边的日落"
+    assert extract_image_prompt("叶桐 画一只戴墨镜的猫") == "一只戴墨镜的猫"
+    assert extract_image_prompt("叶桐，画海边的日落") == "海边的日落"
 
 
 def test_extract_image_prompt_supports_english_and_rejects_questions() -> None:

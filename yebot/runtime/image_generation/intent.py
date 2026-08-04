@@ -9,6 +9,7 @@ from typing import Any
 from ...domain.identity import is_bot_mentioned
 
 _CQ_CODE_PATTERN = re.compile(r"\[CQ:[^\]]+]", re.IGNORECASE)
+_WAKE_PREFIX_PATTERN = re.compile(r"^叶桐\s*[,，:：]?\s*", re.IGNORECASE)
 _IMAGE_INTENT_PATTERNS = (
     re.compile(
         r"^(?:请帮我|帮我|麻烦你|麻烦|请你|请|给我|替我|我想(?:要)?(?:让你)?|想要|来|整)?"
@@ -46,7 +47,8 @@ _IMAGE_EDIT_PATTERNS = (
 
 def _normalize_image_request(message: str) -> str:
     normalized = _CQ_CODE_PATTERN.sub(" ", message)
-    return " ".join(normalized.replace("\r", " ").splitlines()).strip()
+    normalized = " ".join(normalized.replace("\r", " ").splitlines()).strip()
+    return _WAKE_PREFIX_PATTERN.sub("", normalized, count=1).strip()
 
 
 def extract_image_prompt(message: str) -> str | None:

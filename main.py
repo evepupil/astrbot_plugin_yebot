@@ -86,6 +86,7 @@ try:
         StickerImageRef,
         StickerService,
         StickerStore,
+        build_sticker_consider_arguments,
         enrich_history_image_source,
         extract_history_image_sources,
         extract_image_components,
@@ -172,6 +173,7 @@ except ImportError:
         StickerImageRef,
         StickerService,
         StickerStore,
+        build_sticker_consider_arguments,
         enrich_history_image_source,
         extract_history_image_sources,
         extract_image_components,
@@ -2151,15 +2153,18 @@ class YeBot(Star):
     async def llm_sticker_consider(
         self,
         event: AstrMessageEvent,
-        should_collect: bool,
-        asset_kind: str,
-        reaction_ready: bool,
-        confidence: float,
+        should_collect: bool = False,
+        asset_kind: str = "other",
+        reaction_ready: bool = False,
+        confidence: float = 0.0,
         meaning: str = "",
         tags: list[str] | None = None,
-        image_index: float = 0,
+        image_index: float = 0.0,
     ) -> str:
         """完成识图后决定是否收藏当前消息中的图片。
+
+        Decision fields default to rejection so an incomplete local tool call
+        cannot fail inside AstrBot before the YeBot gateway validates it.
 
         Args:
             should_collect(boolean): 是否收藏图片。
@@ -2172,19 +2177,15 @@ class YeBot(Star):
             confidence(number): 模型对判断的置信度。
         """
 
-        index: object = image_index
-        if isinstance(image_index, float) and image_index.is_integer():
-            index = int(image_index)
-        arguments: dict[str, object] = {
-            "should_collect": should_collect,
-            "asset_kind": asset_kind,
-            "reaction_ready": reaction_ready,
-            "meaning": meaning,
-            "image_index": index,
-            "confidence": confidence,
-        }
-        if tags is not None:
-            arguments["tags"] = tags
+        arguments = build_sticker_consider_arguments(
+            should_collect=should_collect,
+            asset_kind=asset_kind,
+            reaction_ready=reaction_ready,
+            confidence=confidence,
+            meaning=meaning,
+            tags=tags,
+            image_index=image_index,
+        )
         result = await self._run_single_tool(event, "sticker.consider", arguments)
         state = _AUTO_STICKER_SEND_STATE.get()
         if state is not None and result.ok and result.outcomes:

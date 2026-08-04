@@ -1,5 +1,6 @@
 """Persistent, shared sticker collection and retrieval."""
 
+from .agent import build_sticker_consider_arguments
 from .caption_cache import (
     STICKER_CAPTION_PROMPT_VERSION,
     StickerCaptionCache,
@@ -38,4 +39,5 @@ __all__ = [
     "STICKER_CAPTION_PROMPT_VERSION",
     "StickerCaptionCache",
     "image_reference_fingerprint",
+    "build_sticker_consider_arguments",
 ]

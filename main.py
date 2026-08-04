@@ -231,6 +231,12 @@ def _current_message_text(event: AstrMessageEvent) -> str:
     return str(message_str).strip()[:4000]
 
 
+def _event_is_addressed(event: AstrMessageEvent) -> bool:
+    """Treat AstrBot's bot mention or wake-prefix state as direct addressing."""
+
+    return bool(getattr(event, "is_at_or_wake_command", False))
+
+
 def _request_id(event: AstrMessageEvent) -> str:
     message_obj = getattr(event, "message_obj", None)
     message_id = getattr(message_obj, "message_id", "")
@@ -1476,13 +1482,15 @@ class YeBot(Star):
         if not isinstance(raw_event, Mapping):
             raise ValueError("event unavailable")
         identity = parse_identity(raw_event, self._owner_ids)
+        mentioned = is_bot_mentioned(raw_event, event.get_self_id() or self._bot_id)
         summary = MessageSummary(
             _message_text(event),
             identity.user_id,
             identity.group_id,
             identity.role,
-            is_bot_mentioned(raw_event, event.get_self_id() or self._bot_id),
+            mentioned,
             _request_id(event),
+            addressed=mentioned or _event_is_addressed(event),
         )
         route = self._agent_router.route(
             summary,
@@ -2310,13 +2318,15 @@ class YeBot(Star):
                 ensure_ascii=False,
             )
         identity = parse_identity(raw_event, self._owner_ids)
+        mentioned = is_bot_mentioned(raw_event, event.get_self_id() or self._bot_id)
         summary = MessageSummary(
             task,
             identity.user_id,
             identity.group_id,
             identity.role,
-            is_bot_mentioned(raw_event, event.get_self_id() or self._bot_id),
+            mentioned,
             _request_id(event),
+            addressed=mentioned or _event_is_addressed(event),
         )
         route = self._agent_router.route(summary, requested_subagent=agent)
         plan = self._agent_planner.build(
@@ -2484,6 +2494,7 @@ class YeBot(Star):
         if not is_group_image_request_addressed(
             raw_event,
             event.get_self_id() or self._bot_id,
+            wake_command=_event_is_addressed(event),
         ):
             return
         await self._handle_image_generation_request(event)

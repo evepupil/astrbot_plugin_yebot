@@ -84,7 +84,9 @@ def extract_image_edit_prompt(message: str) -> str | None:
 def is_group_image_request_addressed(
     raw_event: Mapping[str, Any],
     bot_id: str,
+    *,
+    wake_command: bool = False,
 ) -> bool:
-    """Require an explicit bot mention before handling a group image request."""
+    """Accept a real bot mention or AstrBot's configured wake command."""
 
-    return is_bot_mentioned(raw_event, bot_id)
+    return wake_command or is_bot_mentioned(raw_event, bot_id)

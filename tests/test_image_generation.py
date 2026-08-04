@@ -33,7 +33,7 @@ def test_extract_image_edit_prompt_supports_reference_transform_requests() -> No
     assert extract_image_edit_prompt("改一下") is None
 
 
-def test_group_image_request_requires_a_mention_to_the_bot() -> None:
+def test_group_image_request_accepts_a_mention_or_wake_command() -> None:
     without_mention = {"message": [{"type": "text", "data": {"text": "画一只猫"}}]}
     with_other_mention = {"message": [{"type": "at", "data": {"qq": "456"}}]}
     with_bot_mention = {"message": [{"type": "at", "data": {"qq": "123"}}]}
@@ -41,6 +41,11 @@ def test_group_image_request_requires_a_mention_to_the_bot() -> None:
     assert not is_group_image_request_addressed(without_mention, "123")
     assert not is_group_image_request_addressed(with_other_mention, "123")
     assert is_group_image_request_addressed(with_bot_mention, "123")
+    assert is_group_image_request_addressed(
+        without_mention,
+        "123",
+        wake_command=True,
+    )
 
 
 def test_daily_quota_is_shared_across_restarts_and_resets_by_day(

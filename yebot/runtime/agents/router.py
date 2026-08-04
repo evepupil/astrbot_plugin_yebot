@@ -39,10 +39,10 @@ class AgentRouter:
         if (
             not allow_unmentioned
             and not owner_tool_request
-            and not summary.mentioned
+            and not summary.addressed
             and summary.group_id
         ):
-            return RouteDecision(RouteKind.IGNORE, "bot_not_mentioned")
+            return RouteDecision(RouteKind.IGNORE, "bot_not_addressed")
         if requested_tool and requested_subagent:
             return RouteDecision(RouteKind.DIRECT, "ambiguous_route_request")
         if requested_tool:
@@ -50,7 +50,7 @@ class AgentRouter:
                 RouteKind.TOOL,
                 (
                     "owner_explicit_tool_request"
-                    if owner_tool_request and not summary.mentioned
+                    if owner_tool_request and not summary.addressed
                     else "explicit_tool_request"
                 ),
                 target=requested_tool,

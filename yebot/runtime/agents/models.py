@@ -57,12 +57,17 @@ class MessageSummary:
     role: UserRole
     mentioned: bool
     request_id: str = ""
+    addressed: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "text", self.text.strip()[:4000])
         object.__setattr__(self, "user_id", self.user_id.strip())
         object.__setattr__(self, "group_id", self.group_id.strip())
         object.__setattr__(self, "request_id", self.request_id.strip())
+        # A real bot mention has always counted as addressing the bot. The
+        # separate flag also allows AstrBot wake prefixes such as "叶桐".
+        if self.mentioned:
+            object.__setattr__(self, "addressed", True)
 
 
 @dataclass(frozen=True, slots=True)

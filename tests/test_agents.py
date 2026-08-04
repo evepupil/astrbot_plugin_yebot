@@ -22,10 +22,18 @@ from yebot.runtime.agents import (
 def summary(
     *,
     mentioned: bool = True,
+    wake_command: bool = False,
     text: str = "查一下",
     role: UserRole = UserRole.MEMBER,
 ) -> MessageSummary:
-    return MessageSummary(text, "42", "100", role, mentioned)
+    return MessageSummary(
+        text,
+        "42",
+        "100",
+        role,
+        mentioned,
+        addressed=mentioned or wake_command,
+    )
 
 
 def test_router_returns_explainable_decisions() -> None:
@@ -38,7 +46,7 @@ def test_router_returns_explainable_decisions() -> None:
     )
     subagent = router.route(summary(text="整理群成员"), requested_subagent="research")
 
-    assert (ignored.kind, ignored.reason) == (RouteKind.IGNORE, "bot_not_mentioned")
+    assert (ignored.kind, ignored.reason) == (RouteKind.IGNORE, "bot_not_addressed")
     assert (direct.kind, direct.reason) == (
         RouteKind.DIRECT,
         "no_tool_or_subagent_requested",
@@ -83,7 +91,31 @@ def test_unmentioned_member_tool_request_stays_blocked() -> None:
         requested_tool="group.mute_member",
     )
 
-    assert (route.kind, route.reason) == (RouteKind.IGNORE, "bot_not_mentioned")
+    assert (route.kind, route.reason) == (RouteKind.IGNORE, "bot_not_addressed")
+
+
+def test_wake_command_allows_unmentioned_member_tool_request() -> None:
+    route = AgentRouter().route(
+        summary(mentioned=False, wake_command=True),
+        requested_tool="group.mute_member",
+    )
+
+    assert (route.kind, route.reason) == (
+        RouteKind.TOOL,
+        "explicit_tool_request",
+    )
+
+
+def test_owner_wake_command_is_recorded_as_addressed() -> None:
+    route = AgentRouter().route(
+        summary(mentioned=False, wake_command=True, role=UserRole.OWNER),
+        requested_tool="group.get_members",
+    )
+
+    assert (route.kind, route.reason) == (
+        RouteKind.TOOL,
+        "explicit_tool_request",
+    )
 
 
 def test_planner_builds_tool_and_restricted_subagent_steps() -> None:

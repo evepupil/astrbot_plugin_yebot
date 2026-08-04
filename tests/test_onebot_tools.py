@@ -488,7 +488,7 @@ def test_owner_forward_scene_uses_target_nickname_and_onebot_nodes() -> None:
     assert result.code is ToolResultCode.SUCCESS
     assert result.value == {
         "node_count": 3,
-        "target_nickname": "小李（虚构）",
+        "target_nickname": "小李",
         "sent": True,
         "result": {
             "dry_run": False,
@@ -500,7 +500,7 @@ def test_owner_forward_scene_uses_target_nickname_and_onebot_nodes() -> None:
                         "type": "node",
                         "data": {
                             "user_id": "0",
-                            "nickname": "小李（虚构）",
+                            "nickname": "小李",
                             "content": [
                                 {"type": "text", "data": {"text": "怎么又轮到我了"}}
                             ],
@@ -510,7 +510,7 @@ def test_owner_forward_scene_uses_target_nickname_and_onebot_nodes() -> None:
                         "type": "node",
                         "data": {
                             "user_id": "0",
-                            "nickname": "群友甲（虚构）",
+                            "nickname": "群友甲",
                             "content": [
                                 {"type": "text", "data": {"text": "因为你最会整活"}}
                             ],
@@ -520,7 +520,7 @@ def test_owner_forward_scene_uses_target_nickname_and_onebot_nodes() -> None:
                         "type": "node",
                         "data": {
                             "user_id": "0",
-                            "nickname": "小李（虚构）",
+                            "nickname": "小李",
                             "content": [
                                 {"type": "text", "data": {"text": "那我先撤退"}}
                             ],

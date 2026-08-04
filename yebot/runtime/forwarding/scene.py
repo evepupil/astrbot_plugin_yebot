@@ -1,4 +1,4 @@
-"""Validate model-authored fictional dialogue before it reaches OneBot."""
+"""Validate model-authored forward dialogue before it reaches OneBot."""
 
 from __future__ import annotations
 
@@ -11,14 +11,13 @@ _MAX_NODES = 12
 _MAX_SPEAKER_LENGTH = 32
 _MAX_CONTENT_LENGTH = 300
 _MAX_TOTAL_CONTENT_LENGTH = 2_000
-_FICTION_SUFFIX = "（虚构）"
 _SUFFIX_PATTERN = re.compile(r"[（(]\s*虚构\s*[）)]\s*$")
 _FORBIDDEN_SPEAKER_PATTERN = re.compile(r"[\r\n\[\]@]")
 
 
 @dataclass(frozen=True, slots=True)
 class ForwardSceneNode:
-    """One visibly fictional node sent through a QQ forward message."""
+    """One custom node sent through a QQ forward message."""
 
     nickname: str
     content: str
@@ -32,7 +31,7 @@ def build_forward_scene(
     """Build bounded, plain-text forward nodes from one model tool call.
 
     ``speaker=target`` is the only way to use the current @ target's nickname.
-    Every node is marked fictional by this function, never by the model.
+    Node nicknames are normalized here, never supplied verbatim by the model.
     """
 
     if not isinstance(nodes, list) or not _MIN_NODES <= len(nodes) <= _MAX_NODES:
@@ -55,10 +54,10 @@ def build_forward_scene(
             raise ValueError("scene content is too long")
 
         if speaker.lower() == "target":
-            nickname = _fictional_name(target_nickname)
+            nickname = _node_nickname(target_nickname)
             has_target = True
         else:
-            nickname = _fictional_name(speaker)
+            nickname = _node_nickname(speaker)
         rendered.append(ForwardSceneNode(nickname, content))
 
     if not has_target:
@@ -75,10 +74,10 @@ def _required_text(value: object, field: str) -> str:
     return text
 
 
-def _fictional_name(value: str) -> str:
+def _node_nickname(value: str) -> str:
     base = _SUFFIX_PATTERN.sub("", value).strip()
     if not base or len(base) > _MAX_SPEAKER_LENGTH:
         raise ValueError("speaker name has an invalid length")
     if _FORBIDDEN_SPEAKER_PATTERN.search(base):
         raise ValueError("speaker name contains unsupported characters")
-    return f"{base}{_FICTION_SUFFIX}"
+    return base

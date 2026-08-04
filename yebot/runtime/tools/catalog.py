@@ -93,9 +93,7 @@ MESSAGE_GET_RECENT_FOR_RECALL = ToolDefinition(
 
 FORWARD_SCENE_SEND = ToolDefinition(
     name="message.forward_scene",
-    description=(
-        "Send a visibly fictional multi-node forward scene to the current group."
-    ),
+    description="Send a custom multi-node forward chat scene to the current group.",
     permission="message.forward_scene",
     parameters=(
         ParameterSpec("target_user_id", ParameterType.STRING, min_length=1),

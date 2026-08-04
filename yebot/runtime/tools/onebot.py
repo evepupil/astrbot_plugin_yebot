@@ -522,7 +522,7 @@ class _OneBotHandlers:
         dry_run = isinstance(result, Mapping) and result.get("dry_run") is True
         return {
             "node_count": len(nodes),
-            "target_nickname": f"{target_nickname}（虚构）",
+            "target_nickname": target_nickname,
             "sent": not dry_run,
             "result": result,
         }

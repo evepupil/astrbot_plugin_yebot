@@ -363,12 +363,11 @@ YeBot 工具选择规则：
   根据返回的消息内容自行判断目标，再把其中的 message_id 传给撤回工具。不得编造消息 ID，
   也不得撤回当前这条撤回指令。工具会校验目标仍在当前群，权限和实际 QQ 管理权限交给网关
   与平台判断。
-- 只有主人明确要求创作“虚构转发对话”时，调用 yebot_forward_scene_send。当前消息中被 @ 的
-  对象、名字、回复对象或指代应传为 target；nodes 必须生成 3 到 12 条自然的短对话，
-  每项只有 speaker 和
-  content 两个文本字段，目标人物使用 speaker=target。工具会读取当前群昵称，并为每个节点
-  追加 `（虚构）`。不得试图自行添加、删除或隐藏该标识，也不得构造 QQ 号、CQ 码、图片或
-  其他消息段。
+- 只有主人明确要求生成“聊天记录/转发对话”场景时，调用 yebot_forward_scene_send。
+  当前消息中被 @ 的对象、名字、回复对象或指代应传为 target；nodes 必须生成 3 到
+  12 条自然的短对话，每项只有 speaker 和 content 两个文本字段，目标人物用
+  speaker=target。工具读取当前群昵称作为节点显示名。不得自行构造 QQ 号、CQ 码、
+  图片或其他消息段。
 - 收到图片并完成识图后，先按 meme、reaction_sticker、cartoon_reaction、photo、
   screenshot、document、other 之一分类。普通真人/宠物/美食/风景照片，即使有情绪，
   也必须视为 photo，不得收藏；截图、文档和普通照片一律不得收藏。只有已经是梗图、
@@ -2123,7 +2122,7 @@ class YeBot(Star):
         target_user_id: str = "",
         target: str = "",
     ) -> str:
-        """发送主人要求的、每个节点均标为虚构的合并转发对话。
+        """发送主人要求的合并转发聊天记录场景。
 
         Args:
             nodes(list[object]): 3 到 12 条对话，每项使用 speaker 和 content 文本字段；

@@ -1,4 +1,4 @@
-"""Bounded rendering for clearly labeled fictional forward scenes."""
+"""Bounded rendering for custom forward scenes."""
 
 from .scene import ForwardSceneNode, build_forward_scene
 

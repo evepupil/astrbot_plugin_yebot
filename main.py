@@ -82,6 +82,7 @@ try:
         STICKER_IMAGE_REFS_EXTRA,
         HistoryImageSource,
         NativeStickerClient,
+        StickerCaptionCache,
         StickerImageRef,
         StickerService,
         StickerStore,
@@ -91,9 +92,16 @@ try:
     )
     from .yebot.runtime.targeting import TargetResolution, TargetResolver, TargetStatus
     from .yebot.runtime.token_calculator import TokenCalculator
-    from .yebot.runtime.tools import ToolContext, ToolResult, ToolResultCode
+    from .yebot.runtime.tools import (
+        BackgroundToolContext,
+        OneBotReadCache,
+        ToolActionClient,
+        ToolContext,
+        ToolResult,
+        ToolResultCode,
+        build_background_tool_context,
+    )
     from .yebot.runtime.tools.onebot import (
-        OneBotActionClient,
         OneBotToolRuntime,
         resolve_event_action_client,
     )
@@ -160,6 +168,7 @@ except ImportError:
         STICKER_IMAGE_REFS_EXTRA,
         HistoryImageSource,
         NativeStickerClient,
+        StickerCaptionCache,
         StickerImageRef,
         StickerService,
         StickerStore,
@@ -169,9 +178,16 @@ except ImportError:
     )
     from yebot.runtime.targeting import TargetResolution, TargetResolver, TargetStatus
     from yebot.runtime.token_calculator import TokenCalculator
-    from yebot.runtime.tools import ToolContext, ToolResult, ToolResultCode
+    from yebot.runtime.tools import (
+        BackgroundToolContext,
+        OneBotReadCache,
+        ToolActionClient,
+        ToolContext,
+        ToolResult,
+        ToolResultCode,
+        build_background_tool_context,
+    )
     from yebot.runtime.tools.onebot import (
-        OneBotActionClient,
         OneBotToolRuntime,
         resolve_event_action_client,
     )
@@ -195,6 +211,40 @@ def _as_float(value: object, default: float) -> float:
 
 def _as_text(value: object, default: str) -> str:
     return value.strip() if isinstance(value, str) and value.strip() else default
+
+
+def _provider_modalities(provider: object) -> frozenset[str]:
+    config = getattr(provider, "provider_config", {})
+    if not isinstance(config, Mapping):
+        return frozenset()
+    values: list[object] = []
+    for key in ("modalities", "input_modalities"):
+        candidate = config.get(key)
+        if isinstance(candidate, (list, tuple, set, frozenset)):
+            values.extend(candidate)
+    return frozenset(
+        str(value).strip().lower()
+        for value in values
+        if isinstance(value, str) and value.strip()
+    )
+
+
+def _provider_supports_image(provider: object) -> bool:
+    return "image" in _provider_modalities(provider)
+
+
+def _provider_model_id(provider: object) -> str:
+    for attribute in ("model", "model_name", "model_id"):
+        value = getattr(provider, attribute, None)
+        if isinstance(value, str) and value.strip():
+            return value.strip()[:128]
+    config = getattr(provider, "provider_config", {})
+    if isinstance(config, Mapping):
+        for key in ("model", "model_name", "model_id"):
+            value = config.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()[:128]
+    return ""
 
 
 def _as_response_mode(value: object, default: ResponseMode) -> ResponseMode:
@@ -261,6 +311,7 @@ _AUTO_STICKER_SEND_STATE: ContextVar[dict[str, bool] | None] = ContextVar(
 
 _DEFAULT_MUTE_DURATION_SECONDS = 60
 _RECALL_CANDIDATE_IDS_EXTRA = "yebot.recall.candidate_ids"
+_BACKGROUND_TOOL_CONTEXT_EXTRA = "yebot.background_tool_context"
 
 
 def _set_background_tool_mode(event: object, mode: str, enabled: bool) -> None:
@@ -448,6 +499,8 @@ class YeBot(Star):
             _as_text(values.get("audit_log_path"), "data/yebot_audit.jsonl")
         )
         self._metrics = RuntimeMetrics()
+        self._onebot_read_cache = OneBotReadCache()
+        self._sticker_caption_cache = StickerCaptionCache()
         self._guardrails = GuardrailManager(
             GuardrailSettings(
                 confirmation_ttl_seconds=_as_int(
@@ -580,6 +633,41 @@ class YeBot(Star):
             limit=_as_int(values.get("image_daily_limit"), 3),
         )
 
+    async def _background_tool_context(
+        self, event: AstrMessageEvent
+    ) -> BackgroundToolContext | None:
+        """Resolve and cache explicit identity data for AstrBot cron events."""
+
+        get_extra = getattr(event, "get_extra", None)
+        cached = (
+            get_extra(_BACKGROUND_TOOL_CONTEXT_EXTRA, None)
+            if callable(get_extra)
+            else None
+        )
+        if isinstance(cached, BackgroundToolContext):
+            return cached
+
+        metadata_client = resolve_event_action_client(
+            event,
+            read_cache=self._onebot_read_cache,
+        )
+        context = await build_background_tool_context(
+            event,
+            self._owner_ids,
+            metadata_client,
+        )
+        set_extra = getattr(event, "set_extra", None)
+        if context is not None and callable(set_extra):
+            set_extra(_BACKGROUND_TOOL_CONTEXT_EXTRA, context)
+            logger.info(
+                "YeBot cron context resolved group=%s executor=%s role=%s request=%s",
+                context.group_id or "private",
+                context.identity.user_id,
+                context.identity.role.value,
+                context.request_id,
+            )
+        return context
+
     async def execute_tool(
         self,
         event: AstrMessageEvent,
@@ -597,9 +685,10 @@ class YeBot(Star):
         group-admin rules as message observation.
         """
 
-        raw_event = getattr(event.message_obj, "raw_message", None)
         normalized_name = tool_name.strip().lower()
-        if not isinstance(raw_event, Mapping):
+        background = await self._background_tool_context(event)
+        raw_event = getattr(getattr(event, "message_obj", None), "raw_message", None)
+        if background is None and not isinstance(raw_event, Mapping):
             return ToolResult(
                 normalized_name,
                 ToolResultCode.EXECUTION_ERROR,
@@ -612,23 +701,44 @@ class YeBot(Star):
                 error="observe-only mode",
             )
 
-        await self._ensure_job_worker(event)
-        runtime = OneBotToolRuntime.from_event(
-            event,
-            dry_run=self._tool_dry_run,
-            guardrails=self._guardrails,
-            scheduler=self._job_scheduler,
-            file_root=self._file_root,
-            protect_target_roles=True,
-            metrics=self._metrics,
-            sticker_store=self._sticker_store,
-            sticker_min_auto_collect_confidence=(
-                self._sticker_collect_min_confidence
-            ),
-            memory_service=self._memory_service,
-            model_ratings_client=self._model_ratings_client,
-            token_calculator=self._token_calculator,
-        )
+        action_client = background.action_client if background is not None else None
+        await self._ensure_job_worker(event, client=action_client)
+        if action_client is not None:
+            runtime = OneBotToolRuntime.from_client(
+                action_client,
+                dry_run=self._tool_dry_run,
+                guardrails=self._guardrails,
+                scheduler=self._job_scheduler,
+                file_root=self._file_root,
+                protect_target_roles=True,
+                metrics=self._metrics,
+                sticker_store=self._sticker_store,
+                sticker_min_auto_collect_confidence=(
+                    self._sticker_collect_min_confidence
+                ),
+                memory_service=self._memory_service,
+                model_ratings_client=self._model_ratings_client,
+                token_calculator=self._token_calculator,
+                event=event,
+            )
+        else:
+            runtime = OneBotToolRuntime.from_event(
+                event,
+                dry_run=self._tool_dry_run,
+                guardrails=self._guardrails,
+                scheduler=self._job_scheduler,
+                file_root=self._file_root,
+                protect_target_roles=True,
+                metrics=self._metrics,
+                sticker_store=self._sticker_store,
+                sticker_min_auto_collect_confidence=(
+                    self._sticker_collect_min_confidence
+                ),
+                memory_service=self._memory_service,
+                model_ratings_client=self._model_ratings_client,
+                token_calculator=self._token_calculator,
+                read_cache=self._onebot_read_cache,
+            )
         if runtime is None:
             return ToolResult(
                 normalized_name,
@@ -636,15 +746,27 @@ class YeBot(Star):
                 error="action client unavailable",
             )
 
-        identity = parse_identity(raw_event, self._owner_ids)
+        identity = (
+            background.identity
+            if background is not None
+            else parse_identity(raw_event, self._owner_ids)
+        )
         context = ToolContext(
             identity=identity,
-            target_group_id=normalize_id(target_group_id)
-            or normalize_id(raw_event.get("group_id"))
-            or None,
-            request_id=request_id,
+            target_group_id=(
+                background.group_id
+                if background is not None
+                else normalize_id(target_group_id)
+                or normalize_id(raw_event.get("group_id"))
+                or None
+            ),
+            request_id=request_id
+            or (
+                background.request_id if background is not None else _request_id(event)
+            ),
             confirmation_token=confirmation_token,
             protected_target_ids=tuple((*self._owner_ids, self._bot_id)),
+            background=background,
         )
         return await runtime.execute(normalized_name, arguments, context)
 
@@ -655,7 +777,10 @@ class YeBot(Star):
         cached = get_extra("yebot.reply_context", None) if callable(get_extra) else None
         if isinstance(cached, str):
             return cached
-        context = await resolve_reply_context(event, resolve_event_action_client(event))
+        context = await resolve_reply_context(
+            event,
+            resolve_event_action_client(event, read_cache=self._onebot_read_cache),
+        )
         set_extra = getattr(event, "set_extra", None)
         if callable(set_extra):
             set_extra("yebot.reply_context", context)
@@ -674,8 +799,9 @@ class YeBot(Star):
     ) -> ToolResult:
         """Execute a pending high-risk action for the current actor and group."""
 
-        raw_event = getattr(event.message_obj, "raw_message", None)
-        if not isinstance(raw_event, Mapping):
+        background = await self._background_tool_context(event)
+        raw_event = getattr(getattr(event, "message_obj", None), "raw_message", None)
+        if background is None and not isinstance(raw_event, Mapping):
             return ToolResult(
                 "confirmation",
                 ToolResultCode.EXECUTION_ERROR,
@@ -687,47 +813,88 @@ class YeBot(Star):
                 ToolResultCode.EXECUTION_DISABLED,
                 error="observe-only mode",
             )
-        await self._ensure_job_worker(event)
-        runtime = OneBotToolRuntime.from_event(
-            event,
-            dry_run=self._tool_dry_run,
-            guardrails=self._guardrails,
-            scheduler=self._job_scheduler,
-            file_root=self._file_root,
-            protect_target_roles=True,
-            metrics=self._metrics,
-            sticker_store=self._sticker_store,
-            sticker_min_auto_collect_confidence=(
-                self._sticker_collect_min_confidence
-            ),
-            memory_service=self._memory_service,
-            model_ratings_client=self._model_ratings_client,
-            token_calculator=self._token_calculator,
-        )
+        action_client = background.action_client if background is not None else None
+        await self._ensure_job_worker(event, client=action_client)
+        if action_client is not None:
+            runtime = OneBotToolRuntime.from_client(
+                action_client,
+                dry_run=self._tool_dry_run,
+                guardrails=self._guardrails,
+                scheduler=self._job_scheduler,
+                file_root=self._file_root,
+                protect_target_roles=True,
+                metrics=self._metrics,
+                sticker_store=self._sticker_store,
+                sticker_min_auto_collect_confidence=(
+                    self._sticker_collect_min_confidence
+                ),
+                memory_service=self._memory_service,
+                model_ratings_client=self._model_ratings_client,
+                token_calculator=self._token_calculator,
+                event=event,
+            )
+        else:
+            runtime = OneBotToolRuntime.from_event(
+                event,
+                dry_run=self._tool_dry_run,
+                guardrails=self._guardrails,
+                scheduler=self._job_scheduler,
+                file_root=self._file_root,
+                protect_target_roles=True,
+                metrics=self._metrics,
+                sticker_store=self._sticker_store,
+                sticker_min_auto_collect_confidence=(
+                    self._sticker_collect_min_confidence
+                ),
+                memory_service=self._memory_service,
+                model_ratings_client=self._model_ratings_client,
+                token_calculator=self._token_calculator,
+                read_cache=self._onebot_read_cache,
+            )
         if runtime is None:
             return ToolResult(
                 "confirmation",
                 ToolResultCode.EXECUTION_ERROR,
                 error="action client unavailable",
             )
-        identity = parse_identity(raw_event, self._owner_ids)
+        identity = (
+            background.identity
+            if background is not None
+            else parse_identity(raw_event, self._owner_ids)
+        )
         context = ToolContext(
             identity=identity,
-            target_group_id=normalize_id(raw_event.get("group_id")) or None,
-            request_id=request_id or _request_id(event),
+            target_group_id=(
+                background.group_id
+                if background is not None
+                else normalize_id(raw_event.get("group_id")) or None
+            ),
+            request_id=request_id
+            or (
+                background.request_id if background is not None else _request_id(event)
+            ),
             protected_target_ids=tuple((*self._owner_ids, self._bot_id)),
+            background=background,
         )
         return await runtime.confirm(confirmation_id, context)
 
-    async def _ensure_job_worker(self, event: AstrMessageEvent) -> None:
+    async def _ensure_job_worker(
+        self,
+        event: AstrMessageEvent,
+        *,
+        client: ToolActionClient | None = None,
+    ) -> None:
         if self._job_task is not None and not self._job_task.done():
             return
-        client = resolve_event_action_client(event)
+        client = client or resolve_event_action_client(
+            event,
+            read_cache=self._onebot_read_cache,
+        )
         if client is None:
             return
         self._job_task = asyncio.create_task(self._job_loop(client))
 
-    async def _job_loop(self, client: OneBotActionClient) -> None:
+    async def _job_loop(self, client: ToolActionClient) -> None:
         async def execute(job: Job) -> None:
             if self._tool_dry_run:
                 raise RuntimeError("dry_run_enabled")
@@ -760,7 +927,10 @@ class YeBot(Star):
         async with self._sticker_native_migration_lock:
             if self._sticker_native_migration_done:
                 return
-            client = resolve_event_action_client(event)
+            client = resolve_event_action_client(
+                event,
+                read_cache=self._onebot_read_cache,
+            )
             if client is None:
                 return
             service = StickerService(
@@ -783,7 +953,7 @@ class YeBot(Star):
         event: AstrMessageEvent,
         image_urls: tuple[str, ...],
     ) -> str:
-        """Get a text image description before a fallback model loses images."""
+        """Describe images only for text-only models, reusing stable results."""
 
         if not image_urls:
             return ""
@@ -791,6 +961,17 @@ class YeBot(Star):
             current_provider_id = await self.context.get_current_chat_provider_id(
                 event.unified_msg_origin
             )
+            current_provider = (
+                self.context.get_provider_by_id(current_provider_id)
+                if isinstance(current_provider_id, str) and current_provider_id.strip()
+                else None
+            )
+            if _provider_supports_image(current_provider):
+                logger.debug(
+                    "YeBot sticker caption skipped for image-capable provider=%s",
+                    current_provider_id,
+                )
+                return ""
             config = self.context.get_config()
             provider_settings = (
                 config.get("provider_settings", {})
@@ -814,6 +995,11 @@ class YeBot(Star):
                     if isinstance(provider_id, str) and provider_id.strip()
                 )
             )
+            prompt = (
+                "请按图片顺序用中文客观描述这些图片，说明画面内容、可见文字和视觉类型。"
+                "视觉类型可用普通照片、截图、文档、梗图、表情反应图、卡通反应图或其他。"
+                "不要判断是否值得收藏、是否适合表达情绪，也不要回复群友。"
+            )
             for provider_id in candidates:
                 provider = self.context.get_provider_by_id(provider_id)
                 text_chat = getattr(provider, "text_chat", None)
@@ -832,19 +1018,31 @@ class YeBot(Star):
                     and "image" not in modalities
                 ):
                     continue
-                response = text_chat(
-                    prompt=(
-                        "请按图片顺序用中文客观描述这些图片，说明画面内容、可见文字和视觉类型。"
-                        "视觉类型可用普通照片、截图、文档、梗图、表情反应图、卡通反应图或其他。"
-                        "不要判断是否值得收藏、是否适合表达情绪，也不要回复群友。"
-                    ),
-                    image_urls=list(image_urls),
-                )
-                if inspect.isawaitable(response):
-                    response = await response
-                caption = str(getattr(response, "completion_text", "")).strip()
+                caption_chat = text_chat
+
+                async def load_caption(chat=caption_chat) -> str:
+                    response = chat(prompt=prompt, image_urls=list(image_urls))
+                    if inspect.isawaitable(response):
+                        response = await response
+                    return str(getattr(response, "completion_text", "")).strip()[:3000]
+
+                try:
+                    caption = await self._sticker_caption_cache.get_or_load(
+                        image_urls,
+                        provider_id=provider_id,
+                        model_id=_provider_model_id(provider),
+                        loader=load_caption,
+                    )
+                except Exception as error:
+                    logger.debug(
+                        "YeBot sticker image caption provider failed "
+                        "provider=%s error=%s",
+                        provider_id,
+                        type(error).__name__,
+                    )
+                    continue
                 if caption:
-                    return caption[:3000]
+                    return caption
         except Exception as error:
             logger.debug(
                 "YeBot sticker image caption failed error=%s",
@@ -865,7 +1063,10 @@ class YeBot(Star):
         group_id = normalize_id(raw_event.get("group_id"))
         if not group_id.isdecimal():
             return ()
-        client = resolve_event_action_client(event)
+        client = resolve_event_action_client(
+            event,
+            read_cache=self._onebot_read_cache,
+        )
         if client is None:
             return ()
         bounded_limit = max(1, min(limit, 12))
@@ -1154,6 +1355,19 @@ class YeBot(Star):
                 )
 
     async def terminate(self) -> None:
+        onebot_cache = self._onebot_read_cache.stats()
+        caption_cache = self._sticker_caption_cache.stats()
+        logger.info(
+            "YeBot cache summary onebot_hits=%s onebot_misses=%s "
+            "onebot_coalesced=%s caption_hits=%s caption_misses=%s "
+            "caption_coalesced=%s",
+            onebot_cache.hits,
+            onebot_cache.misses,
+            onebot_cache.coalesced,
+            caption_cache.hits,
+            caption_cache.misses,
+            caption_cache.coalesced,
+        )
         tasks = list(self._background_tasks)
         for task in tasks:
             task.cancel()
@@ -1484,25 +1698,38 @@ class YeBot(Star):
         arguments: Mapping[str, object],
     ) -> AgentRunResult:
         await self._ensure_reply_context(event)
-        raw_event = getattr(event.message_obj, "raw_message", None)
-        if not isinstance(raw_event, Mapping):
+        background = await self._background_tool_context(event)
+        raw_event = getattr(getattr(event, "message_obj", None), "raw_message", None)
+        if background is None and not isinstance(raw_event, Mapping):
             raise ValueError("event unavailable")
-        identity = parse_identity(raw_event, self._owner_ids)
-        mentioned = is_bot_mentioned(raw_event, event.get_self_id() or self._bot_id)
+        identity = (
+            background.identity
+            if background is not None
+            else parse_identity(raw_event, self._owner_ids)
+        )
+        mentioned = (
+            False
+            if background is not None
+            else is_bot_mentioned(raw_event, event.get_self_id() or self._bot_id)
+        )
+        request_id = (
+            background.request_id if background is not None else _request_id(event)
+        )
         summary = MessageSummary(
             _message_text(event),
             identity.user_id,
             identity.group_id,
             identity.role,
             mentioned,
-            _request_id(event),
-            addressed=mentioned or _event_is_addressed(event),
+            request_id,
+            addressed=mentioned or _event_is_addressed(event) or background is not None,
         )
         route = self._agent_router.route(
             summary,
             requested_tool=tool_name,
             tool_arguments=arguments,
-            allow_unmentioned=bool(_BACKGROUND_TOOL_MODE.get())
+            allow_unmentioned=background is not None
+            or bool(_BACKGROUND_TOOL_MODE.get())
             or _event_allows_background_tools(event),
         )
         plan = self._agent_planner.build(route, plan_id=summary.request_id)
@@ -1540,15 +1767,33 @@ class YeBot(Star):
     ) -> TargetResolution:
         """Resolve one target from event structure and natural-language context."""
 
-        raw_event = getattr(event.message_obj, "raw_message", None)
-        if not isinstance(raw_event, Mapping):
+        background = await self._background_tool_context(event)
+        raw_event = getattr(getattr(event, "message_obj", None), "raw_message", None)
+        if background is None and not isinstance(raw_event, Mapping):
             return TargetResolution(TargetStatus.UNRESOLVED)
-        identity = parse_identity(raw_event, self._owner_ids)
-        return await TargetResolver(resolve_event_action_client(event)).resolve(
+        identity = (
+            background.identity
+            if background is not None
+            else parse_identity(raw_event, self._owner_ids)
+        )
+        action_client = (
+            background.action_client
+            if background is not None
+            else resolve_event_action_client(
+                event,
+                read_cache=self._onebot_read_cache,
+            )
+        )
+        return await TargetResolver(action_client).resolve(
             event,
             target_hint=target_hint.strip() or _current_message_text(event),
             actor_id=identity.user_id,
-            bot_id=event.get_self_id().strip() or self._bot_id,
+            bot_id=(
+                self._bot_id
+                if background is not None
+                else event.get_self_id().strip() or self._bot_id
+            ),
+            group_id=background.group_id if background is not None else "",
         )
 
     @staticmethod
@@ -2372,7 +2617,10 @@ class YeBot(Star):
         try:
             reference_image = await resolve_reply_image(
                 event,
-                resolve_event_action_client(event),
+                resolve_event_action_client(
+                    event,
+                    read_cache=self._onebot_read_cache,
+                ),
                 max_bytes=self._image_reference_max_bytes,
             )
         except ImageGenerationError as error:

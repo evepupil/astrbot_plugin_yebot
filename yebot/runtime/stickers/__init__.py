@@ -1,5 +1,10 @@
 """Persistent, shared sticker collection and retrieval."""
 
+from .caption_cache import (
+    STICKER_CAPTION_PROMPT_VERSION,
+    StickerCaptionCache,
+    image_reference_fingerprint,
+)
 from .history import (
     HistoryImageSource,
     enrich_history_image_source,
@@ -30,4 +35,7 @@ __all__ = [
     "extract_history_image_sources",
     "enrich_history_image_source",
     "parse_native_sticker",
+    "STICKER_CAPTION_PROMPT_VERSION",
+    "StickerCaptionCache",
+    "image_reference_fingerprint",
 ]

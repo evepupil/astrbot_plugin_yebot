@@ -45,6 +45,7 @@ class TargetResolver:
         target_hint: str = "",
         actor_id: str = "",
         bot_id: str = "",
+        group_id: str = "",
     ) -> TargetResolution:
         """Resolve one target without making a mutating OneBot call.
 
@@ -54,18 +55,18 @@ class TargetResolver:
         """
 
         raw_event = getattr(getattr(event, "message_obj", None), "raw_message", None)
-        if not isinstance(raw_event, Mapping):
-            return TargetResolution(TargetStatus.UNRESOLVED)
-
-        mentioned = extract_mentioned_user_ids(raw_event, excluded_ids=(bot_id,))
-        if len(mentioned) == 1:
-            return TargetResolution(
-                TargetStatus.RESOLVED,
-                user_id=mentioned[0],
-                source=TargetSource.MENTION,
-            )
-        if len(mentioned) > 1:
-            return _ambiguous_ids(mentioned)
+        event_group_id = ""
+        if isinstance(raw_event, Mapping):
+            mentioned = extract_mentioned_user_ids(raw_event, excluded_ids=(bot_id,))
+            if len(mentioned) == 1:
+                return TargetResolution(
+                    TargetStatus.RESOLVED,
+                    user_id=mentioned[0],
+                    source=TargetSource.MENTION,
+                )
+            if len(mentioned) > 1:
+                return _ambiguous_ids(mentioned)
+            event_group_id = normalize_id(raw_event.get("group_id"))
 
         reply_targets = await self._reply_targets(event)
         if len(reply_targets) == 1:
@@ -92,7 +93,7 @@ class TargetResolver:
                 )
             return TargetResolution(TargetStatus.UNRESOLVED)
 
-        group_id = normalize_id(raw_event.get("group_id"))
+        group_id = normalize_id(group_id) or event_group_id
         if not group_id or self._action_client is None:
             return TargetResolution(TargetStatus.UNRESOLVED)
 

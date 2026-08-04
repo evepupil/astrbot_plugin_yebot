@@ -22,6 +22,7 @@ from ..release import RuntimeMetrics
 from ..replies import render_onebot_message
 from ..stickers import NativeStickerClient, StickerService, StickerStore
 from ..token_calculator import TokenCalculator
+from .background import ToolActionClient
 from .catalog import (
     FILE_READ,
     FORWARD_SCENE_SEND,
@@ -53,6 +54,7 @@ from .catalog import (
 )
 from .gateway import ToolGateway
 from .models import ToolContext, ToolResult
+from .read_cache import OneBotReadCache
 from .registry import ToolRegistry
 
 
@@ -65,17 +67,41 @@ class ActionCallable(Protocol):
 class OneBotActionClient:
     """Normalize sync and async OneBot action clients behind one async API."""
 
-    def __init__(self, call_action: ActionCallable) -> None:
+    def __init__(
+        self,
+        call_action: ActionCallable,
+        read_cache: OneBotReadCache | None = None,
+    ) -> None:
         self._call_action = call_action
+        self._read_cache = read_cache
 
     async def call_action(self, action: str, **params: object) -> object:
+        if self._read_cache is not None:
+            return await self._read_cache.get_or_load(
+                action,
+                params,
+                lambda: self.call_uncached(action, **params),
+            )
+        return await self.call_uncached(action, **params)
+
+    async def call_uncached(self, action: str, **params: object) -> object:
+        """Call OneBot directly, bypassing read caching for safety checks."""
+
         result = self._call_action(action, **params)
         if inspect.isawaitable(result):
-            return await result
-        return result
+            response = await result
+        else:
+            response = result
+        if self._read_cache is not None:
+            self._read_cache.after_write(action, params)
+        return response
 
 
-def resolve_event_action_client(event: object) -> OneBotActionClient | None:
+def resolve_event_action_client(
+    event: object,
+    *,
+    read_cache: OneBotReadCache | None = None,
+) -> OneBotActionClient | None:
     """Resolve the OneBot action API exposed by an AstrBot message event."""
 
     bot = getattr(event, "bot", None)
@@ -84,8 +110,24 @@ def resolve_event_action_client(event: object) -> OneBotActionClient | None:
     if not callable(call_action):
         call_action = getattr(bot, "call_action", None)
     if not callable(call_action):
+        context = getattr(event, "context_obj", None)
+        platform_id = ""
+        get_platform_id = getattr(event, "get_platform_id", None)
+        if callable(get_platform_id):
+            value = get_platform_id()
+            if isinstance(value, str):
+                platform_id = value.strip()
+        get_platform_inst = getattr(context, "get_platform_inst", None)
+        platform = (
+            get_platform_inst(platform_id)
+            if callable(get_platform_inst) and platform_id
+            else None
+        )
+        platform_bot = getattr(platform, "bot", None)
+        call_action = getattr(platform_bot, "call_action", None)
+    if not callable(call_action):
         return None
-    return OneBotActionClient(call_action)
+    return OneBotActionClient(call_action, read_cache=read_cache)
 
 
 class OneBotToolRuntime:
@@ -97,7 +139,7 @@ class OneBotToolRuntime:
     @classmethod
     def from_client(
         cls,
-        client: OneBotActionClient,
+        client: ToolActionClient,
         *,
         dry_run: bool = True,
         guardrails: GuardrailManager | None = None,
@@ -112,9 +154,14 @@ class OneBotToolRuntime:
         token_calculator: TokenCalculator | None = None,
         event: object | None = None,
     ) -> OneBotToolRuntime:
+        onebot_client = (
+            client
+            if isinstance(client, OneBotActionClient)
+            else OneBotActionClient(client.call_action)
+        )
         registry = ToolRegistry()
         handlers = _OneBotHandlers(
-            client,
+            onebot_client,
             dry_run=dry_run,
             scheduler=scheduler,
             file_root=file_root,
@@ -122,7 +169,9 @@ class OneBotToolRuntime:
             sticker_service=(
                 StickerService(
                     sticker_store,
-                    NativeStickerClient(client.call_action) if not dry_run else None,
+                    NativeStickerClient(onebot_client.call_action)
+                    if not dry_run
+                    else None,
                     min_auto_collect_confidence=sticker_min_auto_collect_confidence,
                 )
                 if sticker_store
@@ -186,8 +235,9 @@ class OneBotToolRuntime:
         memory_service: MemoryService | None = None,
         model_ratings_client: ModelRatingsClient | None = None,
         token_calculator: TokenCalculator | None = None,
+        read_cache: OneBotReadCache | None = None,
     ) -> OneBotToolRuntime | None:
-        client = resolve_event_action_client(event)
+        client = resolve_event_action_client(event, read_cache=read_cache)
         if client is None:
             return None
         return cls.from_client(
@@ -431,7 +481,7 @@ class _OneBotHandlers:
     ) -> object:
         group_id = _numeric_id(context.target_group_id, "group_id")
         message_id = _numeric_id(arguments["message_id"], "message_id")
-        response = await self._client.call_action("get_msg", message_id=message_id)
+        response = await self._client.call_uncached("get_msg", message_id=message_id)
         if _message_group_id(response) != group_id:
             raise PermissionError("quoted message is outside the current group")
         result = await self._mutating_action("delete_msg", {"message_id": message_id})
@@ -864,7 +914,7 @@ class _OneBotHandlers:
     ) -> None:
         if not self._protect_target_roles or self._dry_run:
             return
-        response = await self._client.call_action(
+        response = await self._client.call_uncached(
             "get_group_member_info",
             group_id=group_id,
             user_id=user_id,

@@ -31,9 +31,7 @@ def test_foreign_scene_and_chinese_alias_are_supported() -> None:
     assert result["scene"] == "foreign"
     assert result["ratio"] == 480
     assert result["effective_input_price"] == pytest.approx(1.25)
-    assert result["average_price_per_million"] == pytest.approx(
-        (480 * 1.25 + 5) / 481
-    )
+    assert result["average_price_per_million"] == pytest.approx((480 * 1.25 + 5) / 481)
 
 
 @pytest.mark.parametrize(

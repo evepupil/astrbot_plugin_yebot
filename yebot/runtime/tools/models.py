@@ -11,6 +11,7 @@ from typing import TypeAlias, cast
 
 from ...domain.identity import Identity
 from ...domain.permissions import CapabilityPolicy, PermissionDecision
+from .background import BackgroundToolContext
 
 
 class ToolRisk(StrEnum):
@@ -135,6 +136,7 @@ class ToolContext:
     request_id: str = ""
     confirmation_token: str = ""
     protected_target_ids: tuple[str, ...] = ()
+    background: BackgroundToolContext | None = None
 
 
 ToolHandler: TypeAlias = Callable[

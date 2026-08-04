@@ -51,9 +51,8 @@ class TokenCalculator:
         ratio = selected_scene.ratio
         denominator = ratio + 1
         effective_input_price = (
-            (1 - cache_ratio) * bounded_input_price
-            + cache_ratio * bounded_cache_price
-        )
+            1 - cache_ratio
+        ) * bounded_input_price + cache_ratio * bounded_cache_price
         average_price = (
             ratio * effective_input_price + bounded_output_price
         ) / denominator

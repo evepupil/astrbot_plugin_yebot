@@ -1,6 +1,13 @@
 """Tool declarations, registry, and the single execution gateway."""
 
 from ..guardrails import GuardrailManager
+from .background import (
+    BackgroundEventContext,
+    BackgroundToolContext,
+    ToolActionClient,
+    build_background_tool_context,
+    extract_background_event_context,
+)
 from .catalog import (
     FILE_READ,
     FORWARD_SCENE_SEND,
@@ -44,11 +51,17 @@ from .models import (
     validate_parameters,
 )
 from .onebot import OneBotActionClient, OneBotToolRuntime, resolve_event_action_client
+from .read_cache import OneBotReadCache
 from .registry import RegisteredTool, ToolRegistrationError, ToolRegistry
 
 __all__ = [
     "ParameterSpec",
     "ParameterType",
+    "BackgroundEventContext",
+    "BackgroundToolContext",
+    "ToolActionClient",
+    "build_background_tool_context",
+    "extract_background_event_context",
     "GROUP_GET_MEMBERS",
     "GROUP_GET_RECENT_SPEAKERS",
     "GROUP_GET_RANDOM_MEMBER",
@@ -85,6 +98,7 @@ __all__ = [
     "ToolRegistrationError",
     "ToolRegistry",
     "OneBotActionClient",
+    "OneBotReadCache",
     "OneBotToolRuntime",
     "ToolResult",
     "ToolResultCode",

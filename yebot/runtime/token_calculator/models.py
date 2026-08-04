@@ -54,9 +54,7 @@ class TokenCalculation:
             "effective_input_price": self.effective_input_price,
             "average_price_per_million": self.average_price_per_million,
             "estimated_total_cost": self.estimated_total_cost,
-            "average_price_display": (
-                f"${self.average_price_per_million:.5f} / M"
-            ),
+            "average_price_display": (f"${self.average_price_per_million:.5f} / M"),
             "estimated_total_cost_display": f"${self.estimated_total_cost:.2f}",
         }
 

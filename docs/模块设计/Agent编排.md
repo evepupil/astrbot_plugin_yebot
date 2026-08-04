@@ -26,6 +26,8 @@ AstrBot 主 Agent/function tool
 
 `MessageSummary` 只保留本次路由需要的用户、群、角色、真实 @ 状态、唤醒命令状态和截断后的任务文本，不保存原始事件对象。真实 @ 或 AstrBot 已识别的唤醒前缀（例如“叶桐”）都会标记为已叫到机器人。`AgentPlan` 是不可变步骤集合，每个步骤有唯一 ID；相同 `parallel_group` 的连续步骤才会并发，默认预算为串行执行。
 
+AstrBot 原生 `active_agent` 定时任务使用 `CronMessageEvent`，这个事件没有可供 OneBot 解析的原始消息映射。YeBot 从 `cron_payload.session`、`sender_id` 和 `cron_job` 元数据构造 `BackgroundToolContext`，显式保存任务群号、执行者 `Identity`、本次运行 ID、平台 action 客户端和原事件引用。群管理员角色通过 `get_group_member_info` 查询，查询失败时按普通群员处理。工具仍进入同一个 `ToolGateway`，定时任务不会通过伪造 QQ 消息绕过权限。
+
 ## 关键决策
 
 - AstrBot 的 LLM function tool 只负责提供模型入口；每次调用先创建路由和计划，再进入 `YeBot.execute_tool`。
@@ -34,6 +36,7 @@ AstrBot 主 Agent/function tool
 - 默认预算为最多 6 步、并发 1、总超时 30 秒，可在插件配置中调整；达到步骤上限后不再执行剩余步骤。
 - 单步异常只返回异常类型，编排器停止后续步骤并汇总失败原因，不把平台异常正文交给模型。
 - SubAgent 的默认白名单只有 `group.get_members`；白名单构造时硬性拒绝对外消息工具。
+- 后台 Agent 的工具调用允许没有 @ 机器人的消息地址状态，但只接受 `BackgroundToolContext` 提供的群范围和执行者身份；普通提醒继续由 YeBot `JobScheduler` 负责持久化和执行。
 
 ## 当前实现
 
@@ -69,6 +72,8 @@ AstrBot 主 Agent/function tool
 
 ## 验证方式
 
+`tests/test_background.py` 覆盖 Cron 元数据、群角色查询、主人身份、无原始消息时的目标解析和上下文绑定；`tests/test_onebot_tools.py` 覆盖从 AstrBot 平台上下文恢复定时任务 action 客户端。
+
 `tests/test_agents.py` 覆盖可解释路由、主人未 @ 的工具直达、唤醒前缀直达、普通成员未被 @ 或唤醒的拒绝、工具/SubAgent 计划、SubAgent 发消息禁配、串行多工具、步骤上限、异常收敛、总超时和 SubAgent 结果汇总；`tests/test_replies.py`、`tests/test_permissions.py` 和 `tests/test_onebot_tools.py` 覆盖引用解析、撤回工具的引用或候选入口、角色权限、候选排除当前指令、当前群校验和 OneBot action。与 M4-M9 测试合并后，当前本地全量测试、Ruff 和 strict mypy 均通过。容器内的新增工具仍需重载后做运行态验收。
 
 运行中的 AstrBot 验收需要：用自然语言询问群成员、创建提醒、读取测试文件或公开网页；提出禁言请求确认直接走 dry-run/OneBot action；提出踢人请求确认先返回一次性编号，再由原操作者明确确认；提出只读整理任务确认 SubAgent 只能使用只读白名单。
@@ -93,3 +98,4 @@ AstrBot 主 Agent/function tool
 - 2026-08-03：接入引用式消息撤回入口，主 Agent 只把当前唯一回复目标交给工具网关，防止模型凭上下文猜测消息 ID。
 - 2026-08-03：撤回支持自然语言自动选择，主 Agent 先读取最近消息再使用当前事件内的候选 ID；引用目标仍优先。
 - 2026-08-03：表情收录 Agent 改为提交明确类别、独立反应资格和置信度；主人可通过新增表情库查看与删除工具清理误收内容。
+- 2026-08-04：为 AstrBot 原生 active-agent 定时事件增加显式后台工具上下文，传递群号、执行者身份、运行请求 ID 和平台 action 客户端；角色查询失败按最低权限处理。

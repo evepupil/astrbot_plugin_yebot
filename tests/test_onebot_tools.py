@@ -85,6 +85,33 @@ def test_get_members_calls_onebot_and_sanitizes_result() -> None:
     assert client.calls == [("get_group_member_list", {"group_id": 100})]
 
 
+def test_cron_event_resolves_action_client_from_platform_context() -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    async def call_action(action: str, **params: object) -> object:
+        calls.append((action, params))
+        return {"status": "ok"}
+
+    platform = SimpleNamespace(bot=SimpleNamespace(call_action=call_action))
+    event = SimpleNamespace(
+        bot=None,
+        context_obj=SimpleNamespace(
+            get_platform_inst=lambda platform_id: (
+                platform if platform_id == "aiocqhttp" else None
+            )
+        ),
+        get_platform_id=lambda: "aiocqhttp",
+    )
+
+    client = resolve_event_action_client(event)
+
+    assert client is not None
+    assert asyncio.run(client.call_action("get_group_member_list", group_id=100)) == {
+        "status": "ok"
+    }
+    assert calls == [("get_group_member_list", {"group_id": 100})]
+
+
 def test_reminder_list_is_shared_by_current_group() -> None:
     client = FakeActionClient({})
     scheduler = JobScheduler(MemoryJobStore())

@@ -311,9 +311,10 @@ def _event_message_id(event: object) -> str:
 
 def _is_image_component(component: object) -> bool:
     component_type = str(getattr(component, "type", "")).lower()
-    return component_type in {"image", "componenttype.image"} or type(
-        component
-    ).__name__.lower() == "image"
+    return (
+        component_type in {"image", "componenttype.image"}
+        or type(component).__name__.lower() == "image"
+    )
 
 
 def _sticker_kind(value: object) -> StickerKind:

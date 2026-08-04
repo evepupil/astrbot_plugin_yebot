@@ -47,9 +47,7 @@ def test_reply_author_resolves_before_name_lookup() -> None:
     client = FakeActionClient(
         {
             "get_msg": {
-                "data": {
-                    "sender": {"user_id": 99, "nickname": "小李", "card": ""}
-                }
+                "data": {"sender": {"user_id": 99, "nickname": "小李", "card": ""}}
             }
         }
     )

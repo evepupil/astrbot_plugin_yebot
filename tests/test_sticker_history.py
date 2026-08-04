@@ -113,9 +113,7 @@ def test_history_image_source_can_be_enriched_by_get_image() -> None:
             "messages": [
                 {
                     "message_id": 20,
-                    "message": [
-                        {"type": "image", "data": {"file": "face.png"}}
-                    ],
+                    "message": [{"type": "image", "data": {"file": "face.png"}}],
                 }
             ]
         }

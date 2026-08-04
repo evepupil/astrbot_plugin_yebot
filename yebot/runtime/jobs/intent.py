@@ -104,9 +104,7 @@ def parse_reminder_request(
         return ReminderParse(None, "syntax_invalid")
 
     target_ids = tuple(
-        dict.fromkeys(
-            value.strip() for value in mentioned_user_ids if value.strip()
-        )
+        dict.fromkeys(value.strip() for value in mentioned_user_ids if value.strip())
     )
     if len(target_ids) > 1:
         return ReminderParse(None, "multiple_targets")

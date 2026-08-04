@@ -28,6 +28,12 @@ def _group_scope(session: object) -> tuple[str, str] | None:
     return platform, group_id
 
 
+def group_scope_from_session(session: object) -> tuple[str, str] | None:
+    """Return the platform and group ID encoded in a group message session."""
+
+    return _group_scope(session)
+
+
 def _payload(job: Any) -> Mapping[str, object] | None:
     payload = getattr(job, "payload", None)
     return payload if isinstance(payload, Mapping) else None
@@ -91,4 +97,8 @@ def install_native_cron_group_sharing() -> bool:
     return True
 
 
-__all__ = ["install_native_cron_group_sharing", "native_cron_job_accessible"]
+__all__ = [
+    "group_scope_from_session",
+    "install_native_cron_group_sharing",
+    "native_cron_job_accessible",
+]

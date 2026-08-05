@@ -1,9 +1,9 @@
 # 2026-08-05 日志巡检 Review
 
-- 本轮 review 起点 commit：`20c00c4`
-- 本轮 review 终点 commit：`e9263f6`
-- 本轮检查范围：2026-08-04 21:00:32Z 至 21:30:33Z；包含修复后的部署复核。
-- 前一轮 review 区间：`7b86fed` 至 `20c00c4`。
+- 本轮 review 起点 commit：`0773cd9`
+- 本轮 review 终点 commit：`0773cd9`
+- 本轮检查范围：2026-08-05 00:00:35Z 至 00:30:35Z。
+- 前一轮 review 区间：`20c00c4` 至 `e9263f6`。
 
 ## 前一轮记录（2026-08-04 19:13:31Z 至 19:43:31Z）
 
@@ -44,3 +44,13 @@
 - 处理：为 `should_collect`、`asset_kind`、`reaction_ready` 和 `confidence` 增加保守默认值，新增 `build_sticker_consider_arguments` 统一构造参数；缺字段时默认不收藏，仍由 YeBot 网关完成最终校验。补充 `tests/test_sticker_agent.py` 回归测试。
 - 验证：发布门禁通过（214 tests、Ruff、格式检查、strict mypy）；提交 `e9263f6` 已推送；执行 `scripts/sync_plugin.ps1 -Restart` 只重启 AstrBot。Windows 与 WSL 的 `main.py`、新 helper、`service.py`、`onebot.py` 哈希一致；两个容器运行，部署后复核窗口（从 21:40:33Z 开始）的 89 条日志无 Traceback、`execution_error`、贴图或图片失败，包含 AstrBot 启动和插件加载标记。
 - 结论：本轮问题已按明确技术根因修复；未进行真实 QQ 图片人工验收。
+
+## 本轮增量复核（2026-08-05 00:00:35Z 至 00:30:35Z）
+
+- 状态：待决策；根因未确认，暂不修改业务代码。
+- 证据：采集 126 条日志信号，出现 1 条 `execution_error`，操作名为 `sticker.consider`，归一化指纹为 `3d9eebed0f0b1f70`；没有 Traceback、异常类型、容器退出或 OneBot/WebSocket 断连。其余贴图判断为成功结果或受保护的结果；其中有 2 次 dry-run 发送和 1 次自动发送限额保护。
+- 影响：一次自动贴图收录决策可能未完成；当前没有普通回复、容器、QQ 链路或实际发送失败的证据。
+- 已排除：没有图片源不可用、Base64、文件读取、原生表情同步或连接失败的明确日志；修复后的 `should_collect` 缺省参数 TypeError 未复现。
+- 候选方向：继续保留自动收录并通过脱敏异常类型定位；暂时关闭 `sticker_auto_collect`；检查该次图片组件或存储边界；继续确认 AstrBot 工具循环是否仍有未覆盖的异常入口。
+- 需要决策：是否保持自动收录继续观察，还是暂时关闭以降低单次失败噪声。
+- 结论：当前证据不足以归因到 YeBot 代码或 AstrBot；按待决策问题暂停业务代码改动。

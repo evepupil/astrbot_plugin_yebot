@@ -1,8 +1,8 @@
 # 2026-08-05 日志巡检 Review
 
-- 本轮 review 起点 commit：`533b083`
-- 本轮 review 终点 commit：`533b083`
-- 本轮检查范围：2026-08-05 07:05:53Z 至 07:34:05Z。
+- 本轮 review 起点 commit：`6087203`
+- 本轮 review 终点 commit：`6087203`
+- 本轮检查范围：2026-08-05 08:03:44Z 至 08:34:54Z。
 - 前一轮 review 区间：`20c00c4` 至 `e9263f6`。
 
 ## 前一轮记录（2026-08-04 19:13:31Z 至 19:43:31Z）
@@ -143,3 +143,11 @@
 - 聚合：采集 738 条日志行，去重后有 24 个 `yebot_sticker_consider` 阶段和 1 个时间点的 `ActionFailed`（`retcode=1200`）。该失败行没有关联 action 名称；没有 `Traceback`、`execution_error` 或 `send_group_forward_msg` 调用。
 - 影响：贴图自动收录仍可能有单次失败；当前没有普通回复、伪造聊天记录、OneBot 转发、容器状态或连接链路受影响的证据。
 - 处理判断：`retcode=1200` 仍无法归属到 YeBot handler、图片组件、贴图存储或 OneBot action。继续沿用总览中的待决策项，暂停业务代码修改；需要带 action 关联的脱敏日志或人工 QQ 验收来决定部署策略。
+
+## 本轮增量复核（2026-08-05 08:03:44Z 至 08:34:54Z）
+
+- 状态：待决策；贴图工具异常继续出现，未发现新的伪造聊天记录或转发代码回归。
+- 容器：`astrbot` 与 `napcat` 均处于运行状态；窗口内没有容器退出、明确拒绝连接或断线信号。
+- 聚合：采集 522 条日志行，去重后有 16 个 `yebot_sticker_consider` 阶段；08:14:38Z 出现 1 次 `execution_error`，08:25:34Z 出现 1 个未关联 action 的 `ActionFailed`（`retcode=1200`）。没有 `Traceback` 或 `send_group_forward_msg` 调用。
+- 影响：贴图自动收录决策仍可能有单次失败；当前没有普通回复、伪造聊天记录、OneBot 转发、容器状态或连接链路受影响的证据。
+- 处理判断：异常仍未暴露可确认的 YeBot handler、图片组件、贴图存储或 OneBot action 根因。继续沿用总览中的待决策项，暂停业务代码修改；需要带 action 关联的脱敏日志或人工 QQ 验收来决定部署策略。

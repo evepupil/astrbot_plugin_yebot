@@ -24,7 +24,7 @@ AstrBot 主 Agent/function tool
     -> AgentRunResult（状态、步骤结果、汇总）
 ```
 
-`MessageSummary` 只保留本次路由需要的用户、群、角色、真实 @ 状态、唤醒命令状态和截断后的任务文本，不保存原始事件对象。真实 @ 或 AstrBot 已识别的唤醒前缀（例如“叶桐”）都会标记为已叫到机器人。`AgentPlan` 是不可变步骤集合，每个步骤有唯一 ID；相同 `parallel_group` 的连续步骤才会并发，默认预算为串行执行。
+`MessageSummary` 只保留本次路由需要的用户、群、角色、真实 @ 状态、唤醒命令状态和截断后的任务文本，不保存原始事件对象。真实 @、AstrBot 已识别的唤醒前缀（例如“叶桐”）以及引用段后的配置唤醒前缀都会标记为已叫到机器人。`AgentPlan` 是不可变步骤集合，每个步骤有唯一 ID；相同 `parallel_group` 的连续步骤才会并发，默认预算为串行执行。
 
 AstrBot 原生 `active_agent` 定时任务使用 `CronMessageEvent`，这个事件没有可供 OneBot 解析的原始消息映射。YeBot 从 `cron_payload.session`、`sender_id` 和 `cron_job` 元数据构造 `BackgroundToolContext`，显式保存任务群号、执行者 `Identity`、本次运行 ID、平台 action 客户端和原事件引用。群管理员角色通过 `get_group_member_info` 查询，查询失败时按普通群员处理。工具仍进入同一个 `ToolGateway`，定时任务不会通过伪造 QQ 消息绕过权限。
 
@@ -102,3 +102,4 @@ AstrBot 原生 `active_agent` 定时任务使用 `CronMessageEvent`，这个事�
 - 2026-08-03：撤回支持自然语言自动选择，主 Agent 先读取最近消息再使用当前事件内的候选 ID；引用目标仍优先。
 - 2026-08-03：表情收录 Agent 改为提交明确类别、独立反应资格和置信度；主人可通过新增表情库查看与删除工具清理误收内容。
 - 2026-08-04：为 AstrBot 原生 active-agent 定时事件增加显式后台工具上下文，传递群号、执行者身份、运行请求 ID 和平台 action 客户端；角色查询失败按最低权限处理。
+- 2026-08-05：补充引用段后的唤醒前缀地址恢复，保留工具权限、确认和额度边界。

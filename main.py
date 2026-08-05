@@ -28,6 +28,7 @@ try:
         parse_identity,
     )
     from .yebot.domain.policy import LowFrequencyPolicy, PolicyConfig
+    from .yebot.runtime.addressing import is_reply_prefixed_wake
     from .yebot.runtime.agents import (
         AgentBudget,
         AgentOrchestrator,
@@ -115,6 +116,7 @@ except ImportError:
         parse_identity,
     )
     from yebot.domain.policy import LowFrequencyPolicy, PolicyConfig
+    from yebot.runtime.addressing import is_reply_prefixed_wake
     from yebot.runtime.agents import (
         AgentBudget,
         AgentOrchestrator,
@@ -289,6 +291,18 @@ def _event_is_addressed(event: AstrMessageEvent) -> bool:
     """Treat AstrBot's bot mention or wake-prefix state as direct addressing."""
 
     return bool(getattr(event, "is_at_or_wake_command", False))
+
+
+class _ReplyWakeFilter(filter.CustomFilter):
+    """Match a configured wake prefix in current text after a reply segment."""
+
+    def filter(self, event: AstrMessageEvent, cfg: Any) -> bool:
+        if _event_is_addressed(event):
+            return False
+        get_messages = getattr(event, "get_messages", None)
+        messages = get_messages() if callable(get_messages) else ()
+        prefixes = cfg.get("wake_prefix", ())
+        return is_reply_prefixed_wake(messages, prefixes)
 
 
 def _request_id(event: AstrMessageEvent) -> str:
@@ -1354,6 +1368,19 @@ class YeBot(Star):
                     state.get("sent", False),
                     bool(_),
                 )
+
+    @filter.custom_filter(_ReplyWakeFilter)
+    @filter.platform_adapter_type(filter.PlatformAdapterType.AIOCQHTTP)
+    @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
+    async def restore_reply_wake_addressing(self, event: AstrMessageEvent) -> None:
+        """Restore wake state when a reply precedes the configured wake prefix."""
+
+        event.is_at_or_wake_command = True
+        event.is_wake = True
+        logger.debug(
+            "YeBot restored reply wake addressing message=%s",
+            _request_id(event),
+        )
 
     async def terminate(self) -> None:
         onebot_cache = self._onebot_read_cache.stats()

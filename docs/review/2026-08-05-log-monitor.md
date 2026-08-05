@@ -1,8 +1,8 @@
 # 2026-08-05 日志巡检 Review
 
-- 本轮 review 起点 commit：`3f4b6b3`
-- 本轮 review 终点 commit：`3f4b6b3`
-- 本轮检查范围：2026-08-05 08:36:04Z 至 09:03:13.530Z。
+- 本轮 review 起点 commit：`b2215ce`
+- 本轮 review 终点 commit：`b2215ce`
+- 本轮检查范围：2026-08-05 09:03:13.530Z 至 09:33:14.033Z。
 - 前一轮 review 区间：`20c00c4` 至 `e9263f6`。
 
 ## 前一轮记录（2026-08-04 19:13:31Z 至 19:43:31Z）
@@ -160,3 +160,12 @@
 - 关联判断：08:38:59.838Z 的 `execution_error` 直接带贴图工具标记；08:51:20.704Z 的 `retcode=1200` 没有关联 action 名称，不能归因到贴图、伪造聊天记录或转发流程。
 - 影响：贴图自动收录决策仍可能有单次失败；当前没有普通回复、伪造聊天记录、OneBot 转发、容器状态或连接链路受影响的证据。
 - 处理判断：异常仍未暴露可确认的 YeBot handler、图片组件、贴图存储或 OneBot action 根因。继续沿用总览中的待决策项，暂停业务代码修改；需要带 action 关联的脱敏日志或人工 QQ 验收来决定部署策略。
+
+## 本轮增量复核（2026-08-05 09:03:13.530Z 至 09:33:14.033Z）
+
+- 状态：待决策；贴图工具循环异常继续出现，未发现新的伪造聊天记录或转发代码回归。
+- 容器：`astrbot` 运行约 5 小时，`napcat` 运行约 2 天；窗口内没有容器退出或重启迹象。
+- 聚合：采集 905 条日志行，其中 `astrbot` 618 条、`napcat` 287 条；出现 61 个 `yebot_sticker_consider` 阶段、20 个 `sticker.consider` 阶段、3 组 `Traceback/TypeError` 和 2 次 `execution_error`。异常调用均聚合到 AstrBot `tool_loop_agent`；没有 `ActionFailed`（`retcode=1200`）、`send_group_forward_msg`、图片源/Base64 错误或明确连接失败信号。
+- 关联判断：09:08:48Z、09:28:31Z、09:28:36Z 出现工具循环 `Traceback/TypeError`，其中 09:28:31Z 含 unexpected-keyword 形态；09:32:31Z 和 09:32:38Z 随后出现 `execution_error`。当前证据仍指向 AstrBot 本地工具循环适配层，无法确认 YeBot handler 或贴图存储根因。
+- 影响：贴图自动收录决策可能有多次未完成；当前没有普通回复、伪造聊天记录、OneBot 转发、容器可用性或真实 QQ 链路受影响的证据。
+- 处理判断：该问题涉及 AstrBot 版本/工具循环部署策略，继续按待决策项暂停 YeBot 业务代码修改；需要明确部署取舍或带 action 关联的脱敏诊断后再处理。人工 QQ 验收仍未完成。

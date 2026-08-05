@@ -1,8 +1,8 @@
 # 2026-08-05 日志巡检 Review
 
-- 本轮 review 起点 commit：`4f76a34`
-- 本轮 review 终点 commit：`4f76a34`（本轮未修改代码）
-- 本轮检查范围：2026-08-05 11:23:15.678Z 至 11:56:14.669Z。
+- 本轮 review 起点 commit：`9b3611c`
+- 本轮 review 终点 commit：`9b3611c`（本轮未修改代码）
+- 本轮检查范围：2026-08-05 11:56:14.669Z 至 12:24:43.957Z。
 - 前一轮 review 区间：`20c00c4` 至 `e9263f6`。
 
 ## 前一轮记录（2026-08-04 19:13:31Z 至 19:43:31Z）
@@ -183,3 +183,11 @@
   2. 在 AstrBot/部署层增加网络失败重试或降级提示。
   3. 若确认是固定上游地址或配置问题，再调整部署配置并单独验证。
 - 需要决策：是否允许调整 WSL/Docker DNS、上游服务配置或 AstrBot 网络重试策略；在根因确认前不修改 YeBot 业务代码。
+
+## 本轮增量复核（2026-08-05 11:56:14.669Z 至 12:24:43.957Z）
+
+- 状态：待决策；已知贴图工具循环异常继续出现，上一轮外部 DNS 异常未复现。
+- 容器：`astrbot` 与 `napcat` 均保持运行；窗口内没有容器退出、插件导入失败或 OneBot/WebSocket 断线信号。
+- 聚合：采集 706 条日志行，出现 4 次 Traceback、2 次 `execution_error`，后者均带 `sticker.consider`/`yebot_sticker_consider` 标记；另有 16 次 `ActionFailed`。没有 `TypeError`、`ClientConnectorDNSError`、`gaierror` 或其他非贴图 execution_error。
+- 关联判断：Traceback 均与已知 AstrBot `tool_loop_agent`/贴图阶段相邻，未出现 YeBot 文件栈或新的业务调用阶段；继续归入问题 2。
+- 处理判断：当前没有新的可确认 YeBot 代码回归，继续保留贴图问题待决策，不修改业务代码；上一轮 DNS 问题仅保持观察。

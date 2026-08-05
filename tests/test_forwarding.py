@@ -11,11 +11,15 @@ def test_forward_scene_reuses_target_nickname_and_keeps_plain_names() -> None:
             {"speaker": "target", "content": "那我先撤退"},
         ],
         target_nickname="小李",
+        target_user_id="99",
     )
 
     assert nodes[0].nickname == "小李"
+    assert nodes[0].user_id == "99"
     assert nodes[1].nickname == "群友甲"
+    assert nodes[1].user_id == "0"
     assert nodes[2].nickname == "小李"
+    assert nodes[2].user_id == "99"
     assert [node.content for node in nodes] == [
         "怎么又轮到我了",
         "因为你最会整活",
@@ -31,9 +35,11 @@ def test_forward_scene_accepts_resolved_target_nickname_as_speaker() -> None:
             {"speaker": "小李", "content": "那我先撤退"},
         ],
         target_nickname="小李",
+        target_user_id="99",
     )
 
     assert [node.nickname for node in nodes] == ["小李", "群友甲", "小李"]
+    assert [node.user_id for node in nodes] == ["99", "0", "99"]
 
 
 def test_forward_scene_strips_stray_fiction_suffix_from_speaker() -> None:
@@ -44,6 +50,7 @@ def test_forward_scene_strips_stray_fiction_suffix_from_speaker() -> None:
             {"speaker": "群友乙", "content": "第三条"},
         ],
         target_nickname="小李",
+        target_user_id="99",
     )
 
     assert [node.nickname for node in nodes] == ["小李", "群友甲", "群友乙"]
@@ -70,4 +77,17 @@ def test_forward_scene_strips_stray_fiction_suffix_from_speaker() -> None:
 )
 def test_forward_scene_rejects_invalid_or_unsafe_nodes(nodes: object) -> None:
     with pytest.raises(ValueError):
-        build_forward_scene(nodes, target_nickname="小李")
+        build_forward_scene(nodes, target_nickname="小李", target_user_id="99")
+
+
+def test_forward_scene_rejects_non_numeric_target_user_id() -> None:
+    with pytest.raises(ValueError):
+        build_forward_scene(
+            [
+                {"speaker": "target", "content": "第一条"},
+                {"speaker": "群友甲", "content": "第二条"},
+                {"speaker": "群友乙", "content": "第三条"},
+            ],
+            target_nickname="小李",
+            target_user_id="abc",
+        )

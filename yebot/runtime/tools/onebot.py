@@ -503,12 +503,13 @@ class _OneBotHandlers:
         nodes = build_forward_scene(
             arguments["nodes"],
             target_nickname=target_nickname,
+            target_user_id=str(target_user_id),
         )
         messages = [
             {
                 "type": "node",
                 "data": {
-                    "user_id": "0",
+                    "user_id": node.user_id,
                     "nickname": node.nickname,
                     "content": [{"type": "text", "data": {"text": node.content}}],
                 },

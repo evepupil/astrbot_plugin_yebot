@@ -499,7 +499,7 @@ def test_owner_forward_scene_uses_target_nickname_and_onebot_nodes() -> None:
                     {
                         "type": "node",
                         "data": {
-                            "user_id": "0",
+                            "user_id": "99",
                             "nickname": "小李",
                             "content": [
                                 {"type": "text", "data": {"text": "怎么又轮到我了"}}
@@ -519,7 +519,7 @@ def test_owner_forward_scene_uses_target_nickname_and_onebot_nodes() -> None:
                     {
                         "type": "node",
                         "data": {
-                            "user_id": "0",
+                            "user_id": "99",
                             "nickname": "小李",
                             "content": [
                                 {"type": "text", "data": {"text": "那我先撤退"}}

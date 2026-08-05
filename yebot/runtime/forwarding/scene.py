@@ -14,28 +14,38 @@ _MAX_TOTAL_CONTENT_LENGTH = 2_000
 _TARGET_SPEAKER = "target"
 _SUFFIX_PATTERN = re.compile(r"[（(]\s*虚构\s*[）)]\s*$")
 _FORBIDDEN_SPEAKER_PATTERN = re.compile(r"[\r\n\[\]@]")
+_ANONYMOUS_USER_ID = "0"
 
 
 @dataclass(frozen=True, slots=True)
 class ForwardSceneNode:
-    """One custom node sent through a QQ forward message."""
+    """One custom node sent through a QQ forward message.
+
+    ``user_id`` is the target's real QQ for target nodes (so QQ renders their
+    avatar) and ``0`` for anonymous speaker nodes.
+    """
 
     nickname: str
     content: str
+    user_id: str
 
 
 def build_forward_scene(
     nodes: object,
     *,
     target_nickname: str,
+    target_user_id: str,
 ) -> tuple[ForwardSceneNode, ...]:
     """Build bounded, plain-text forward nodes from one model tool call.
 
     ``speaker=target`` or the resolved target nickname identifies the current
-    target. Node nicknames are normalized here, never supplied verbatim by the
-    model.
+    target; those nodes carry the target's real ``target_user_id`` so QQ renders
+    their avatar, while other speakers stay anonymous. Nicknames are normalized
+    here, never supplied verbatim by the model.
     """
 
+    if not target_user_id.isdecimal():
+        raise ValueError("target_user_id must be a numeric ID")
     if not isinstance(nodes, list) or not _MIN_NODES <= len(nodes) <= _MAX_NODES:
         raise ValueError(f"nodes must contain {_MIN_NODES} to {_MAX_NODES} items")
 
@@ -60,10 +70,12 @@ def build_forward_scene(
         normalized_speaker = _node_nickname(speaker)
         if normalized_speaker.casefold() in target_keys:
             nickname = target_name
+            user_id = target_user_id
             has_target = True
         else:
             nickname = normalized_speaker
-        rendered.append(ForwardSceneNode(nickname, content))
+            user_id = _ANONYMOUS_USER_ID
+        rendered.append(ForwardSceneNode(nickname, content, user_id))
 
     if not has_target:
         raise ValueError("scene must include the target speaker")

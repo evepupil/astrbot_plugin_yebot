@@ -1,8 +1,8 @@
 # 2026-08-05 日志巡检 Review
 
-- 本轮 review 起点 commit：`3dca8c8`
-- 本轮 review 终点 commit：`3dca8c8`
-- 本轮检查范围：2026-08-05 00:00:35Z 至 00:30:35Z。
+- 本轮 review 起点 commit：`4b4c54f`
+- 本轮 review 终点 commit：`4b4c54f`
+- 本轮检查范围：2026-08-05 00:00:35Z 至 03:30:38Z。
 - 前一轮 review 区间：`20c00c4` 至 `e9263f6`。
 
 ## 前一轮记录（2026-08-04 19:13:31Z 至 19:43:31Z）
@@ -65,3 +65,14 @@
 - 候选方向：继续保持自动收录并增加脱敏阶段/异常类型诊断；暂时关闭 `sticker_auto_collect`；检查 AstrBot 工具循环与当前 function tool 回调的兼容性；根因确认后再补针对性兜底。
 - 需要决策：是否继续保持自动收录观察，还是暂时关闭以降低重复失败噪声。
 - 结论：按待决策问题暂停业务代码改动；当前无法进行可靠修复或人工 QQ 验收。
+
+## 本轮增量复核（2026-08-05 02:30:37Z 至 03:30:38Z）
+
+- 状态：待决策；异常数量上升，调用阶段指向 AstrBot 本地工具适配层，仍需部署/产品取舍后处理。
+- 证据：窗口采集 1477 条日志行，出现 9 条 `execution_error`；其中 8 条直接带有 `sticker.consider` / `yebot_sticker_consider` 标记，另 1 条为同一工具循环的通用失败记录。出现 3 条 Traceback，3 条均为 `TypeError`，调用路径聚合到 AstrBot `call_local_llm_tool`、`_execute_local`、`astr_agent_tool_exec` 和 `tool_loop_agent`。TypeError 形态为 2 条 unexpected-keyword mismatch、1 条 missing-required-argument mismatch；异常行没有暴露 `should_collect` 等 YeBot 决策字段名。本轮 `execution_error` 结构指纹为 `0ff9e4999cfaf0e6`（8 条）和 `cfc55fe5a905fbc2`（1 条）。
+- 已排除：没有图片源不可用、Base64、文件读取、原生表情同步、超时、参数校验、权限、连接、WebSocket 或 OneBot 故障信号；容器仍处于运行状态。此前缺少 `should_collect` 的 TypeError 形态未复现。
+- 影响：本轮至少有 8 次贴图相关工具循环失败，自动贴图收录决策可能未完成；当前没有普通回复、容器、QQ 链路或实际发送失败的证据。
+- 处理判断：当前证据已明显偏向 AstrBot 本地 function tool 回调的参数兼容问题，未指向 `StickerService.consider` 的图片或存储处理；仍无法仅凭运行日志确认 AstrBot 版本实现的具体修复点，因此不直接修改 YeBot 业务代码。
+- 候选方向：检查并升级/修复 AstrBot 本地工具循环适配；暂时关闭 `sticker_auto_collect`；在 YeBot 工具入口增加只记录阶段和异常类型的脱敏诊断后继续观察。
+- 需要决策：是否允许调整 AstrBot 版本或工具循环部署策略，是否暂时关闭自动贴图收录，以及是否接受增加运行诊断日志。
+- 结论：按待决策问题暂停业务代码改动；尚未部署变更，也未完成真实 QQ 人工验收。

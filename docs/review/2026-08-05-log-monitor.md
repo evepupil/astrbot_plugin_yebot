@@ -1,8 +1,8 @@
 # 2026-08-05 日志巡检 Review
 
-- 本轮 review 起点 commit：`b2215ce`
-- 本轮 review 终点 commit：`b2215ce`
-- 本轮检查范围：2026-08-05 09:03:13.530Z 至 09:33:14.033Z。
+- 本轮 review 起点 commit：`4f76a34`
+- 本轮 review 终点 commit：`4f76a34`（本轮未修改代码）
+- 本轮检查范围：2026-08-05 11:23:15.678Z 至 11:56:14.669Z。
 - 前一轮 review 区间：`20c00c4` 至 `e9263f6`。
 
 ## 前一轮记录（2026-08-04 19:13:31Z 至 19:43:31Z）
@@ -169,3 +169,17 @@
 - 关联判断：09:08:48Z、09:28:31Z、09:28:36Z 出现工具循环 `Traceback/TypeError`，其中 09:28:31Z 含 unexpected-keyword 形态；09:32:31Z 和 09:32:38Z 随后出现 `execution_error`。当前证据仍指向 AstrBot 本地工具循环适配层，无法确认 YeBot handler 或贴图存储根因。
 - 影响：贴图自动收录决策可能有多次未完成；当前没有普通回复、伪造聊天记录、OneBot 转发、容器可用性或真实 QQ 链路受影响的证据。
 - 处理判断：该问题涉及 AstrBot 版本/工具循环部署策略，继续按待决策项暂停 YeBot 业务代码修改；需要明确部署取舍或带 action 关联的脱敏诊断后再处理。人工 QQ 验收仍未完成。
+
+## 本轮增量复核（2026-08-05 11:23:15.678Z 至 11:56:14.669Z）
+
+### 问题 3：AstrBot 工具循环出现外部 DNS 解析异常
+
+- 状态：待确认/待决策；未修改 YeBot 业务代码。
+- 证据：窗口采集 1244 条日志行，`astrbot` 与 `napcat` 容器均保持运行。AstrBot 出现 8 次 Traceback，脱敏异常类型为 `ClientConnectorDNSError` 2 次和 `gaierror` 1 次；调用栈聚合到标准网络连接的 `getaddrinfo`/`resolve` 阶段以及 AstrBot `tool_loop_agent`。没有 YeBot 文件、插件导入、`TypeError`、容器退出或 OneBot 断线信号。
+- 已区分：窗口另有 3 次 `execution_error`，均带既有 `sticker.consider`/`yebot_sticker_consider` 标记，归入问题 2；没有发现新的非贴图执行错误。
+- 影响：外部地址解析失败可能使个别模型工具循环无法完成；当前没有容器不可用、普通回复整体中断或 QQ/OneBot 链路中断的证据。
+- 候选方案：
+  1. 检查 WSL/Docker 容器 DNS 和上游模型服务可达性，确认是否为短时基础设施波动。
+  2. 在 AstrBot/部署层增加网络失败重试或降级提示。
+  3. 若确认是固定上游地址或配置问题，再调整部署配置并单独验证。
+- 需要决策：是否允许调整 WSL/Docker DNS、上游服务配置或 AstrBot 网络重试策略；在根因确认前不修改 YeBot 业务代码。

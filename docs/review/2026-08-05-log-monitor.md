@@ -1,7 +1,7 @@
 # 2026-08-05 日志巡检 Review
 
-- 本轮 review 起点 commit：`0773cd9`
-- 本轮 review 终点 commit：`0773cd9`
+- 本轮 review 起点 commit：`3dca8c8`
+- 本轮 review 终点 commit：`3dca8c8`
 - 本轮检查范围：2026-08-05 00:00:35Z 至 00:30:35Z。
 - 前一轮 review 区间：`20c00c4` 至 `e9263f6`。
 
@@ -54,3 +54,14 @@
 - 候选方向：继续保留自动收录并通过脱敏异常类型定位；暂时关闭 `sticker_auto_collect`；检查该次图片组件或存储边界；继续确认 AstrBot 工具循环是否仍有未覆盖的异常入口。
 - 需要决策：是否保持自动收录继续观察，还是暂时关闭以降低单次失败噪声。
 - 结论：当前证据不足以归因到 YeBot 代码或 AstrBot；按待决策问题暂停业务代码改动。
+
+## 本轮增量复核（2026-08-05 02:00:37Z 至 02:30:37Z）
+
+- 状态：待决策；同类异常再次出现，根因仍未确认，暂停业务代码改动。
+- 证据：窗口采集 477 条日志行，出现 3 条 `execution_error`，均包含 `sticker.consider` / `yebot_sticker_consider`，归一化结构指纹为 `0ff9e4999cfaf0e6`；3 条均表现为工具循环的 `status=failed` 和 `step ... failed: execution_error`。另有 9 条 `sticker.consider` 信号和 16 条 `should_collect` 字段信号。
+- 已排除：没有 Traceback、已知异常类型、超时、参数校验、权限、图片源/Base64/文件读取、原生表情同步或连接/WebSocket/OneBot 故障信号；两个容器保持运行。
+- 影响：本轮最多有 3 次自动贴图收录决策未完成；当前没有普通回复、容器、QQ 链路或实际发送失败的证据。
+- 处理判断：源码中的 `llm_sticker_consider` 已具备缺省参数保护，日志只暴露了外层执行失败状态，未暴露触发该状态的 handler 异常类型或阶段。现有证据无法判断是 YeBot handler、图片组件/存储边界、AstrBot 工具循环兼容性还是外部请求行为。
+- 候选方向：继续保持自动收录并增加脱敏阶段/异常类型诊断；暂时关闭 `sticker_auto_collect`；检查 AstrBot 工具循环与当前 function tool 回调的兼容性；根因确认后再补针对性兜底。
+- 需要决策：是否继续保持自动收录观察，还是暂时关闭以降低重复失败噪声。
+- 结论：按待决策问题暂停业务代码改动；当前无法进行可靠修复或人工 QQ 验收。

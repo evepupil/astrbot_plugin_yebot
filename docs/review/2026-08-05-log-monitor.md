@@ -1,9 +1,9 @@
 # 2026-08-05 日志巡检 Review
 
-- 本轮 review 起点 commit：`8cf3a4b`
-- 本轮 review 终点 commit：`8cf3a4b`（本轮未修改代码）
-- 本轮检查范围：2026-08-05 14:33:19.308Z 至 14:53:09.068Z。
-- 前一轮 review 区间：`8d2c6e7` 至 `8d2c6e7`。
+- 本轮 review 起点 commit：`a3f4ee5`
+- 本轮 review 终点 commit：`a3f4ee5`（本轮未修改代码）
+- 本轮检查范围：2026-08-05 14:55:57.988Z 至 15:23:35.732Z。
+- 前一轮 review 区间：`8cf3a4b` 至 `8cf3a4b`。
 
 ## 前一轮记录（2026-08-04 19:13:31Z 至 19:43:31Z）
 
@@ -239,4 +239,11 @@
 - 状态：待确认/待决策；问题 5 持续，未修改 YeBot 业务代码或运行配置。
 - 聚合：采集 260 条日志行，均来自 `napcat`，其中 10 条为固定登录错误类型、30 条为 warning；没有 YeBot 导入失败、Traceback、`execution_error`、目标工具错误或 AstrBot 新错误。
 - 连接核验：两个容器 `RestartCount=0` 且持续运行；NapCat 到 AstrBot `6199` 的已建立 TCP 连接数仍为 0，上一轮确认的 DNS 与端口可达性未改变。
+- 处理判断：登录错误和反向 OneBot 未连接仍需要人工确认 QQ/NapCat 登录状态；继续暂停 YeBot 业务代码和部署配置修改。
+
+## 后续增量复核（2026-08-05 14:55:57.988Z 至 15:23:35.732Z）
+
+- 状态：待确认/待决策；问题 5 持续，未修改 YeBot 业务代码或运行配置。
+- 聚合：采集 364 条日志行，均来自 `napcat`，其中 14 条为固定登录错误类型、42 条为 warning；没有 YeBot 导入失败、Traceback、`execution_error`、目标工具错误或 AstrBot 新错误。
+- 连接核验：两个容器 `RestartCount=0` 且持续运行；NapCat 到 AstrBot `6199` 的已建立 TCP 连接数仍为 0。
 - 处理判断：登录错误和反向 OneBot 未连接仍需要人工确认 QQ/NapCat 登录状态；继续暂停 YeBot 业务代码和部署配置修改。

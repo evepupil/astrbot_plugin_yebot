@@ -1,9 +1,9 @@
 # 2026-08-05 日志巡检 Review
 
-- 本轮 review 起点 commit：`e8d1175`
-- 本轮 review 终点 commit：`e8d1175`（本轮未修改代码）
-- 本轮检查范围：2026-08-05 13:24:05.131Z 至 13:55:47.027Z。
-- 前一轮 review 区间：`20c00c4` 至 `e9263f6`。
+- 本轮 review 起点 commit：`8d2c6e7`
+- 本轮 review 终点 commit：`8d2c6e7`（本轮未修改代码）
+- 本轮检查范围：2026-08-05 13:55:47.027Z 至 14:24:46.050Z。
+- 前一轮 review 区间：`e8d1175` 至 `e8d1175`。
 
 ## 前一轮记录（2026-08-04 19:13:31Z 至 19:43:31Z）
 
@@ -219,3 +219,17 @@
 - 容器：`astrbot` 与 `napcat` 均保持运行；没有插件导入失败、容器退出或 OneBot/WebSocket 断线信号。
 - 聚合：采集 1512 条日志行，出现 10 次 Traceback、1 次 `execution_error` 和 41 次 `ActionFailed`；Traceback 与 `sticker.consider`/`yebot_sticker_consider`、AstrBot `tool_loop_agent` 阶段相邻。没有 `TypeError`、DNS 解析异常、导入失败或非贴图 execution_error。
 - 处理判断：异常仍指向 AstrBot 工具循环与贴图阶段，未暴露 YeBot handler、图片组件或存储根因；继续保留问题 2 待决策，不修改业务代码。
+
+## 本轮增量复核（2026-08-05 13:55:47.027Z 至 14:24:46.050Z）
+
+### 问题 5：NapCat 登录错误且未建立 AstrBot 反向 OneBot WebSocket
+
+- 状态：待确认/待决策；未修改 YeBot 业务代码或运行配置。
+- 证据：窗口采集 390 条 NapCat 日志行，其中 15 条为固定的登录错误类型，约每 2 分钟出现一次；没有 YeBot 导入失败、Traceback、`execution_error`、目标工具错误或 AstrBot 侧新增错误。两个容器 `RestartCount=0` 且持续运行。
+- 连接核验：NapCat 配置中的启用 WebSocket client 指向 AstrBot `6199`；NapCat 可解析 `astrbot`，从 NapCat 到 `astrbot:6199` 的 TCP 探测可达，但 NapCat 当前没有到该端口的已建立连接。窗口内没有反向 WebSocket/OneBot 建连标记。
+- 影响：NapCat 可能无法把 QQ 事件转发给 AstrBot，用户消息和机器人回复链路可能因此中断；当前证据只能确认登录/连接状态异常，尚不能确认是 QQ 登录状态、NapCat 进程未激活 OneBot client，还是其他运行时状态。
+- 候选方案：
+  1. 通过 NapCat WebUI 或现有运维方式确认 QQ 登录状态，必要时由人工重新登录并观察反向连接。
+  2. 若 QQ 已登录，继续检查 NapCat OneBot client 的加载状态和配置生效路径。
+  3. 只有确认配置或部署问题后，再调整 NapCat/Compose 配置；不修改 YeBot 业务代码。
+- 需要决策：是否允许进行 NapCat/QQ 登录人工确认或重新登录；若已登录，是否允许继续调查 NapCat/部署层配置。

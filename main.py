@@ -368,8 +368,8 @@ YeBot 工具选择规则：
 - 只有主人明确要求生成“聊天记录/转发对话”场景时，调用 yebot_forward_scene_send。
   当前消息中被 @ 的对象、名字、回复对象或指代应传为 target；nodes 必须生成 3 到
   12 条自然的短对话，每项只有 speaker 和 content 两个文本字段，目标人物用
-  speaker=target。工具读取当前群昵称作为节点显示名。不得自行构造 QQ 号、CQ 码、
-  图片或其他消息段。
+  speaker=target；若使用已解析的目标昵称，工具也会按目标节点处理。工具读取当前群昵称
+  作为节点显示名。不得自行构造 QQ 号、CQ 码、图片或其他消息段。
 - 收到图片并完成识图后，先按 meme、reaction_sticker、cartoon_reaction、photo、
   screenshot、document、other 之一分类。普通真人/宠物/美食/风景照片，即使有情绪，
   也必须视为 photo，不得收藏；截图、文档和普通照片一律不得收藏。只有已经是梗图、
@@ -2128,7 +2128,7 @@ class YeBot(Star):
 
         Args:
             nodes(list[object]): 3 到 12 条对话，每项使用 speaker 和 content 文本字段；
-                被 @ 的对象使用 speaker=target。
+                被 @ 的对象使用 speaker=target，也可以直接使用已解析的目标昵称。
             target_user_id(string): 被 @ 的目标 QQ 号；存在唯一目标 At 时优先使用它。
             target(string): 人名、群名片、回复对象或自然语言指代。
         """

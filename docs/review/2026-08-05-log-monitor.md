@@ -1,8 +1,8 @@
 # 2026-08-05 日志巡检 Review
 
-- 本轮 review 起点 commit：`4b4c54f`
-- 本轮 review 终点 commit：`4b4c54f`
-- 本轮检查范围：2026-08-05 00:00:35Z 至 03:30:38Z。
+- 本轮 review 起点 commit：`a32e7ec`
+- 本轮 review 终点 commit：`a32e7ec`
+- 本轮检查范围：2026-08-05 03:30:38Z 至 04:24:47Z。
 - 前一轮 review 区间：`20c00c4` 至 `e9263f6`。
 
 ## 前一轮记录（2026-08-04 19:13:31Z 至 19:43:31Z）
@@ -76,3 +76,12 @@
 - 候选方向：检查并升级/修复 AstrBot 本地工具循环适配；暂时关闭 `sticker_auto_collect`；在 YeBot 工具入口增加只记录阶段和异常类型的脱敏诊断后继续观察。
 - 需要决策：是否允许调整 AstrBot 版本或工具循环部署策略，是否暂时关闭自动贴图收录，以及是否接受增加运行诊断日志。
 - 结论：按待决策问题暂停业务代码改动；尚未部署变更，也未完成真实 QQ 人工验收。
+
+## 本轮增量复核（2026-08-05 03:30:38Z 至 04:24:47Z）
+
+- 状态：已解决；代码和运行日志已验证，人工 QQ 验收待完成。
+- 证据：窗口采集 2360 条日志行，出现 9 条转发工具信号；其中有 1 条 `execution_error`、1 条目标歧义结果和 1 条目标未解析结果，没有 `send_group_forward_msg`、OneBot 非零返回、WebSocket 或 NapCat 连接故障信号。失败调用包含 10 条节点，节点 `speaker` 使用了已解析目标昵称，未使用字面量 `speaker=target`。
+- 根因：`yebot/runtime/forwarding/scene.py` 只把字面量 `speaker=target` 识别为目标节点；模型直接复用已解析目标昵称时，节点校验抛出“缺少目标 speaker”，错误发生在 OneBot action 之前。
+- 处理：转发场景先规范化当前群目标昵称，再将字面量 `target` 或与该昵称完全匹配的 `speaker` 归一为目标节点；更新 Agent 工具提示和 M5/M4/M7 模块文档，新增目标昵称直写的回归测试。
+- 验证：`tests/test_forwarding.py` 与 `tests/test_onebot_tools.py` 共 32 项通过；Ruff、strict mypy 和 `git diff --check` 通过。部署后的同问题复查与真实 QQ 发送仍待完成。
+- 结论：已按明确技术根因修复，不需要产品或权限取舍；未进行未经请求的真实 QQ 发送测试。

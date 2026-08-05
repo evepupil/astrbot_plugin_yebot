@@ -23,6 +23,19 @@ def test_forward_scene_reuses_target_nickname_and_keeps_plain_names() -> None:
     ]
 
 
+def test_forward_scene_accepts_resolved_target_nickname_as_speaker() -> None:
+    nodes = build_forward_scene(
+        [
+            {"speaker": "小李", "content": "怎么又轮到我了"},
+            {"speaker": "群友甲", "content": "因为你最会整活"},
+            {"speaker": "小李", "content": "那我先撤退"},
+        ],
+        target_nickname="小李",
+    )
+
+    assert [node.nickname for node in nodes] == ["小李", "群友甲", "小李"]
+
+
 def test_forward_scene_strips_stray_fiction_suffix_from_speaker() -> None:
     nodes = build_forward_scene(
         [

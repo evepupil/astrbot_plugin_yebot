@@ -11,6 +11,7 @@ _MAX_NODES = 12
 _MAX_SPEAKER_LENGTH = 32
 _MAX_CONTENT_LENGTH = 300
 _MAX_TOTAL_CONTENT_LENGTH = 2_000
+_TARGET_SPEAKER = "target"
 _SUFFIX_PATTERN = re.compile(r"[（(]\s*虚构\s*[）)]\s*$")
 _FORBIDDEN_SPEAKER_PATTERN = re.compile(r"[\r\n\[\]@]")
 
@@ -30,13 +31,16 @@ def build_forward_scene(
 ) -> tuple[ForwardSceneNode, ...]:
     """Build bounded, plain-text forward nodes from one model tool call.
 
-    ``speaker=target`` is the only way to use the current @ target's nickname.
-    Node nicknames are normalized here, never supplied verbatim by the model.
+    ``speaker=target`` or the resolved target nickname identifies the current
+    target. Node nicknames are normalized here, never supplied verbatim by the
+    model.
     """
 
     if not isinstance(nodes, list) or not _MIN_NODES <= len(nodes) <= _MAX_NODES:
         raise ValueError(f"nodes must contain {_MIN_NODES} to {_MAX_NODES} items")
 
+    target_name = _node_nickname(target_nickname)
+    target_keys = {_TARGET_SPEAKER, target_name.casefold()}
     rendered: list[ForwardSceneNode] = []
     has_target = False
     total_content_length = 0
@@ -53,11 +57,12 @@ def build_forward_scene(
         if total_content_length > _MAX_TOTAL_CONTENT_LENGTH:
             raise ValueError("scene content is too long")
 
-        if speaker.lower() == "target":
-            nickname = _node_nickname(target_nickname)
+        normalized_speaker = _node_nickname(speaker)
+        if normalized_speaker.casefold() in target_keys:
+            nickname = target_name
             has_target = True
         else:
-            nickname = _node_nickname(speaker)
+            nickname = normalized_speaker
         rendered.append(ForwardSceneNode(nickname, content))
 
     if not has_target:

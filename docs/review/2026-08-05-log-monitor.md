@@ -1,8 +1,8 @@
 # 2026-08-05 日志巡检 Review
 
-- 本轮 review 起点 commit：`43bb3fe`
-- 本轮 review 终点 commit：`43bb3fe`（本轮未修改代码）
-- 本轮检查范围：2026-08-05 12:54:19.352Z 至 13:24:05.131Z。
+- 本轮 review 起点 commit：`e8d1175`
+- 本轮 review 终点 commit：`e8d1175`（本轮未修改代码）
+- 本轮检查范围：2026-08-05 13:24:05.131Z 至 13:55:47.027Z。
 - 前一轮 review 区间：`20c00c4` 至 `e9263f6`。
 
 ## 前一轮记录（2026-08-04 19:13:31Z 至 19:43:31Z）
@@ -198,6 +198,20 @@
 - 容器：`astrbot` 与 `napcat` 均保持运行；没有插件导入失败、容器退出或 OneBot/WebSocket 断线信号。
 - 聚合：采集 1679 条日志行，出现 11 次 Traceback、5 次 `execution_error` 和 45 次 `ActionFailed`；Traceback 与 `sticker.consider`/`yebot_sticker_consider`、AstrBot `tool_loop_agent` 阶段相邻。没有 `TypeError`、DNS 解析异常、导入失败或非贴图 execution_error。
 - 处理判断：异常仍指向 AstrBot 工具循环与贴图阶段，未暴露 YeBot handler、图片组件或存储根因；继续保留问题 2 待决策，不修改业务代码。
+
+## 本轮增量复核（2026-08-05 13:24:05.131Z 至 13:55:47.027Z）
+
+### 问题 4：AstrBot 与 NapCat 同时外部重启，原因未确认
+
+- 状态：待确认；未修改 YeBot 业务代码或运行配置。
+- 证据：`qq-ai-bot-astrbot` 与 `qq-ai-bot-napcat` 的 Docker `StartedAt` 都为 2026-08-05T13:48:07Z，`RestartCount=0`；窗口内没有可归因的 compose 事件记录。重启前后窗口共 1650 条日志，出现 10 次与已知贴图工具循环相邻的 Traceback 和 40 次 `ActionFailed`，没有 `execution_error`、TypeError、DNS、导入失败或连接断线。
+- 重启后验证：重启后的 230 条日志没有 Traceback 或 execution_error，包含 37 个 YeBot/插件加载信号；两个容器持续运行。
+- 影响：13:48Z 附近存在一次短暂服务中断或连接重建风险；当前没有证据表明这是容器崩溃、YeBot 代码异常或 OneBot 链路故障。
+- 候选方案：
+  1. 核对主机、Docker Compose 或人工运维记录，确认是否为计划内重启。
+  2. 若无计划记录，继续观察 Docker/WSL 事件并为下次重启保留脱敏时间标记。
+  3. 只有确认重复且无计划时，再调查宿主机或部署自动化。
+- 需要决策：是否有已知的计划内重启；若没有，是否允许继续调查主机/部署自动化。当前不重启、不调整配置。
 
 ## 本轮增量复核（2026-08-05 12:24:43.957Z 至 12:54:19.352Z）
 

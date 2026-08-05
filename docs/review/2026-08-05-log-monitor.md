@@ -1,8 +1,8 @@
 # 2026-08-05 日志巡检 Review
 
-- 本轮 review 起点 commit：`0b07e45`
-- 本轮 review 终点 commit：`0b07e45`
-- 本轮检查范围：2026-08-05 04:28:53Z 至 04:33:09Z。
+- 本轮 review 起点 commit：`2c58a08`
+- 本轮 review 终点 commit：`2c58a08`
+- 本轮检查范围：2026-08-05 04:33:09Z 至 05:13:48Z。
 - 前一轮 review 区间：`20c00c4` 至 `e9263f6`。
 
 ## 前一轮记录（2026-08-04 19:13:31Z 至 19:43:31Z）
@@ -94,3 +94,12 @@
 - 聚合：窗口采集 205 条日志行，出现 28 条 `sticker.consider` 相关信号和 9 条图片/原生表情错误信号；没有 Traceback、`execution_error`、`status=failed`、Base64、`image source is unavailable`、拒绝连接或断线信号。没有新的 `send_group_forward_msg` 调用。
 - 影响：自动贴图收录或原生表情路径仍可能有单次失败；普通回复、伪造聊天记录、容器状态和 OneBot 连接没有对应故障证据。
 - 处理判断：该问题已在总览中记录，当前日志仍不足以区分图片组件、原生表情同步、AstrBot 工具循环或外部请求行为；继续保持待决策状态，不修改业务代码。
+
+## 本轮增量复核（2026-08-05 04:33:09Z 至 05:13:48Z）
+
+- 状态：待决策；已知贴图工具异常继续出现，未发现新的可确认转发代码回归。
+- 容器：`astrbot` 与 `napcat` 均处于运行状态；Windows 源码与 WSL 插件 `main.py` SHA-256 均为 `a827ee12221f0d08be2721e2a95888ba7b24800bd78d148f133b9c97c77c061e`，AstrBot 日志持续包含 YeBot/AstrBot 加载信号。
+- 转发验证：04:44:24Z 出现转发工具阶段，04:44:25Z 完成一次 `send_group_forward_msg`；结构化结果为成功，未出现同一调用关联的 `ActionFailed` 或非零返回。
+- 贴图与平台信号：窗口有 2 次独立 `TypeError`、1 次 `execution_error`，以及 1 次未带 action 名称的 `ActionFailed`（`retcode=1200`）。该失败行在相邻窗口内没有转发或贴图 action 名称，无法确认根因或业务归属。
+- 影响：伪造聊天记录的代码路径已经通过运行日志进入 OneBot 转发并成功返回；贴图自动收录仍可能有单次失败。当前没有容器退出、OneBot/WebSocket 断线或转发失败证据。
+- 处理判断：`retcode=1200` 仅作为未归因运行信号记录，不增加未经证实的 payload 修复；贴图问题沿用总览中的待决策项，继续暂停业务代码修改。需要后续带 action 关联的脱敏日志或真实 QQ 人工验收，才能决定是否调整 AstrBot 工具循环或贴图策略。

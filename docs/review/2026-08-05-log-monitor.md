@@ -1,8 +1,8 @@
 # 2026-08-05 日志巡检 Review
 
-- 本轮 review 起点 commit：`a32e7ec`
-- 本轮 review 终点 commit：`fb73ef4`
-- 本轮检查范围：2026-08-05 03:30:38Z 至 04:24:47Z。
+- 本轮 review 起点 commit：`0b07e45`
+- 本轮 review 终点 commit：`0b07e45`
+- 本轮检查范围：2026-08-05 04:28:53Z 至 04:33:09Z。
 - 前一轮 review 区间：`20c00c4` 至 `e9263f6`。
 
 ## 前一轮记录（2026-08-04 19:13:31Z 至 19:43:31Z）
@@ -86,3 +86,11 @@
 - 验证：`tests/test_forwarding.py` 与 `tests/test_onebot_tools.py` 共 32 项通过；Ruff、strict mypy 和 `git diff --check` 通过。
 - 部署复核：提交 `fb73ef4` 已推送；`sync_plugin.ps1 -Restart` 只重启 AstrBot。Windows 与 WSL 四个关键源码文件哈希一致，两个容器保持运行，重启后 98 条聚合日志包含 AstrBot 启动和插件加载标记，没有 Traceback、`execution_error`、转发动作或连接错误。
 - 结论：已按明确技术根因修复，不需要产品或权限取舍；代码和运行日志已验证，未进行未经请求的真实 QQ 发送测试，人工 QQ 验收待完成。
+
+## 本轮增量复核（2026-08-05 04:28:53Z 至 04:33:09Z）
+
+- 状态：待决策；已知贴图工具异常继续出现，未发现新的可确认转发代码回归。
+- 容器：`astrbot` 和 `napcat` 均处于运行状态；AstrBot 重启后的日志包含启动和 YeBot 加载标记。
+- 聚合：窗口采集 205 条日志行，出现 28 条 `sticker.consider` 相关信号和 9 条图片/原生表情错误信号；没有 Traceback、`execution_error`、`status=failed`、Base64、`image source is unavailable`、拒绝连接或断线信号。没有新的 `send_group_forward_msg` 调用。
+- 影响：自动贴图收录或原生表情路径仍可能有单次失败；普通回复、伪造聊天记录、容器状态和 OneBot 连接没有对应故障证据。
+- 处理判断：该问题已在总览中记录，当前日志仍不足以区分图片组件、原生表情同步、AstrBot 工具循环或外部请求行为；继续保持待决策状态，不修改业务代码。

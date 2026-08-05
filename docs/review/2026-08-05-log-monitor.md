@@ -1,7 +1,7 @@
 # 2026-08-05 日志巡检 Review
 
 - 本轮 review 起点 commit：`a32e7ec`
-- 本轮 review 终点 commit：`a32e7ec`
+- 本轮 review 终点 commit：`fb73ef4`
 - 本轮检查范围：2026-08-05 03:30:38Z 至 04:24:47Z。
 - 前一轮 review 区间：`20c00c4` 至 `e9263f6`。
 
@@ -83,5 +83,6 @@
 - 证据：窗口采集 2360 条日志行，出现 9 条转发工具信号；其中有 1 条 `execution_error`、1 条目标歧义结果和 1 条目标未解析结果，没有 `send_group_forward_msg`、OneBot 非零返回、WebSocket 或 NapCat 连接故障信号。失败调用包含 10 条节点，节点 `speaker` 使用了已解析目标昵称，未使用字面量 `speaker=target`。
 - 根因：`yebot/runtime/forwarding/scene.py` 只把字面量 `speaker=target` 识别为目标节点；模型直接复用已解析目标昵称时，节点校验抛出“缺少目标 speaker”，错误发生在 OneBot action 之前。
 - 处理：转发场景先规范化当前群目标昵称，再将字面量 `target` 或与该昵称完全匹配的 `speaker` 归一为目标节点；更新 Agent 工具提示和 M5/M4/M7 模块文档，新增目标昵称直写的回归测试。
-- 验证：`tests/test_forwarding.py` 与 `tests/test_onebot_tools.py` 共 32 项通过；Ruff、strict mypy 和 `git diff --check` 通过。部署后的同问题复查与真实 QQ 发送仍待完成。
-- 结论：已按明确技术根因修复，不需要产品或权限取舍；未进行未经请求的真实 QQ 发送测试。
+- 验证：`tests/test_forwarding.py` 与 `tests/test_onebot_tools.py` 共 32 项通过；Ruff、strict mypy 和 `git diff --check` 通过。
+- 部署复核：提交 `fb73ef4` 已推送；`sync_plugin.ps1 -Restart` 只重启 AstrBot。Windows 与 WSL 四个关键源码文件哈希一致，两个容器保持运行，重启后 98 条聚合日志包含 AstrBot 启动和插件加载标记，没有 Traceback、`execution_error`、转发动作或连接错误。
+- 结论：已按明确技术根因修复，不需要产品或权限取舍；代码和运行日志已验证，未进行未经请求的真实 QQ 发送测试，人工 QQ 验收待完成。

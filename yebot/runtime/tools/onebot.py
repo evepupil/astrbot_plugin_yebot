@@ -32,6 +32,7 @@ from .catalog import (
     GROUP_GET_RECENT_SPEAKERS,
     GROUP_KICK_MEMBER,
     GROUP_MUTE_MEMBER,
+    GROUP_SET_MEMBER_NICKNAME,
     GROUP_UNMUTE_MEMBER,
     MEMORY_FORGET,
     MEMORY_RECALL,
@@ -204,6 +205,7 @@ class OneBotToolRuntime:
         registry.register(GROUP_KICK_MEMBER, handlers.kick_member)
         registry.register(GROUP_MUTE_MEMBER, handlers.mute_member)
         registry.register(GROUP_UNMUTE_MEMBER, handlers.unmute_member)
+        registry.register(GROUP_SET_MEMBER_NICKNAME, handlers.set_member_nickname)
         registry.register(MESSAGE_SEND, handlers.send_message)
         registry.register(MESSAGE_RECALL, handlers.recall_message)
         registry.register(
@@ -493,6 +495,38 @@ class _OneBotHandlers:
         }
         await self._check_target_role(context, group_id, user_id)
         return await self._mutating_action("set_group_ban", params)
+
+    async def set_member_nickname(
+        self,
+        context: ToolContext,
+        arguments: Mapping[str, object],
+    ) -> object:
+        group_id = _numeric_id(context.target_group_id, "group_id")
+        user_id = _numeric_id(arguments["user_id"], "user_id")
+        nickname = arguments["nickname"]
+        if not isinstance(nickname, str):
+            raise ValueError("nickname must be a string")
+        normalized_nickname = nickname.strip()
+        if not normalized_nickname:
+            raise ValueError("nickname must not be empty")
+        if "\r" in normalized_nickname or "\n" in normalized_nickname:
+            raise ValueError("nickname must be a single line")
+        await self._check_target_role(context, group_id, user_id)
+        result = await self._mutating_action(
+            "set_group_card",
+            {
+                "group_id": group_id,
+                "user_id": user_id,
+                "card": normalized_nickname,
+            },
+        )
+        dry_run = isinstance(result, Mapping) and result.get("dry_run") is True
+        return {
+            "user_id": str(user_id),
+            "nickname": normalized_nickname,
+            "updated": not dry_run,
+            "result": result,
+        }
 
     async def send_message(
         self,

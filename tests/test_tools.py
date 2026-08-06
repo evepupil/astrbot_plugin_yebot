@@ -9,6 +9,7 @@ from yebot.runtime.guardrails import GuardrailManager
 from yebot.runtime.tools import (
     GROUP_KICK_MEMBER,
     GROUP_MUTE_MEMBER,
+    GROUP_SET_MEMBER_NICKNAME,
     ParameterSpec,
     ParameterType,
     ToolContext,
@@ -258,6 +259,8 @@ def test_group_actions_have_individual_tool_permissions() -> None:
     assert GROUP_KICK_MEMBER.permission == "group.member.kick"
     assert GROUP_MUTE_MEMBER.name == "group.mute_member"
     assert GROUP_MUTE_MEMBER.permission == "group.member.mute"
+    assert GROUP_SET_MEMBER_NICKNAME.name == "group.set_member_nickname"
+    assert GROUP_SET_MEMBER_NICKNAME.permission == "group.member.edit"
 
 
 @pytest.mark.parametrize(

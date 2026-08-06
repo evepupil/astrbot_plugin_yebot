@@ -364,6 +364,9 @@ _AGENT_TOOL_GUIDANCE = """\
 YeBot 工具选择规则：
 - 根据用户的自然语言意图自行选择工具，用户不需要说出工具名或函数名。
 - 用户询问本群成员、人数、昵称或群角色时，调用 yebot_group_get_members。
+- 用户明确要求修改当前群成员的群昵称、群名片或群备注时，调用
+  yebot_group_set_member_nickname；把原话中的对象放进 target，把新的昵称放进
+  nickname。它只允许主人和当前群管理员，权限与实际 QQ 管理能力交给工具网关。
 - 用户说“最近聊天的几个人”“最近发言的人”等集合目标时，先调用
   yebot_group_get_recent_speakers；没有指定数量时默认处理 3 个普通成员，
   逐个调用禁言工具。
@@ -2151,6 +2154,34 @@ class YeBot(Star):
             event,
             "group.unmute_member",
             {"user_id": resolution.user_id},
+        )
+        return self._encode_run(result)
+
+    @filter.llm_tool(name="yebot_group_set_member_nickname")
+    async def llm_group_set_member_nickname(
+        self,
+        event: AstrMessageEvent,
+        nickname: str = "",
+        user_id: str = "",
+        target: str = "",
+    ) -> str:
+        """修改当前群一名成员的群昵称（群名片）。
+
+        Args:
+            nickname(string): 要设置的新群昵称
+            user_id(string): 要操作的 QQ 号
+            target(string): 人名、群名片、回复对象或“他”等指代。
+        """
+        resolution = await self._resolve_member_target(event, target or user_id)
+        if not resolution.resolved:
+            return self._encode_target_resolution(resolution)
+        result = await self._run_single_tool(
+            event,
+            "group.set_member_nickname",
+            {
+                "user_id": resolution.user_id,
+                "nickname": nickname,
+            },
         )
         return self._encode_run(result)
 

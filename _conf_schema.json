@@ -17,7 +17,7 @@
   "tool_dry_run": {
     "type": "bool",
     "title": "工具 dry-run",
-    "description": "开启后读取工具正常执行，发消息、踢人和禁言只返回预览，不调用写入型 OneBot action。",
+    "description": "开启后读取工具正常执行，发消息、踢人、禁言和修改群名片只返回预览，不调用写入型 OneBot action。",
     "default": true
   },
   "model_ratings_enabled": {

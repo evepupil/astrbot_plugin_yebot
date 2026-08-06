@@ -297,6 +297,49 @@ def test_member_cannot_invoke_kick_action() -> None:
     assert client.calls == []
 
 
+def test_member_cannot_change_member_nickname() -> None:
+    client = FakeActionClient({})
+
+    result = asyncio.run(
+        runtime(client).execute(
+            "group.set_member_nickname",
+            {"user_id": "99", "nickname": "新昵称"},
+            tool_context(UserRole.MEMBER),
+        )
+    )
+
+    assert result.code is ToolResultCode.ROLE_DENIED
+    assert client.calls == []
+
+
+def test_admin_can_change_member_nickname_with_group_card_action() -> None:
+    client = FakeActionClient({"set_group_card": {"status": "ok", "retcode": 0}})
+
+    result = asyncio.run(
+        runtime(client, dry_run=False).execute(
+            "group.set_member_nickname",
+            {"user_id": "99", "nickname": "新昵称"},
+            tool_context(UserRole.GROUP_ADMIN),
+        )
+    )
+
+    assert result.code is ToolResultCode.SUCCESS
+    assert result.value == {
+        "user_id": "99",
+        "nickname": "新昵称",
+        "updated": True,
+        "result": {
+            "dry_run": False,
+            "action": "set_group_card",
+            "params": {"group_id": 100, "user_id": 99, "card": "新昵称"},
+            "result": {"status": "ok", "retcode": 0},
+        },
+    }
+    assert client.calls == [
+        ("set_group_card", {"group_id": 100, "user_id": 99, "card": "新昵称"})
+    ]
+
+
 @pytest.mark.parametrize("sender_id", [99, 1592829658])
 def test_admin_can_recall_a_member_or_bot_message(sender_id: int) -> None:
     client = FakeActionClient(

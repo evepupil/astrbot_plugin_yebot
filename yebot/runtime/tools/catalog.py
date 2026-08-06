@@ -41,6 +41,17 @@ GROUP_UNMUTE_MEMBER = ToolDefinition(
     risk=ToolRisk.MEDIUM,
 )
 
+GROUP_SET_MEMBER_NICKNAME = ToolDefinition(
+    name="group.set_member_nickname",
+    description="Change one member's group nickname (group card) in the current group.",
+    permission="group.member.edit",
+    parameters=(
+        ParameterSpec("user_id", ParameterType.STRING, min_length=1),
+        ParameterSpec("nickname", ParameterType.STRING, min_length=1, max_length=60),
+    ),
+    risk=ToolRisk.MEDIUM,
+)
+
 GROUP_GET_MEMBERS = ToolDefinition(
     name="group.get_members",
     description="Read members of the current group.",
@@ -415,6 +426,7 @@ TOOL_CATALOG: tuple[ToolDefinition, ...] = (
     GROUP_KICK_MEMBER,
     GROUP_MUTE_MEMBER,
     GROUP_UNMUTE_MEMBER,
+    GROUP_SET_MEMBER_NICKNAME,
     MESSAGE_SEND,
     MESSAGE_RECALL,
     MESSAGE_GET_RECENT_FOR_RECALL,

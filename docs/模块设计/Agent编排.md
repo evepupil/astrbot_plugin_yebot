@@ -4,7 +4,7 @@
 - 对应代码：`yebot/runtime/agents/`、`main.py`
 - 所属里程碑：[M5](../roadmap.md#m5)
 - 当前状态：进行中
-- 最近更新时间：2026-08-05
+- 最近更新时间：2026-08-07
 
 ## 职责与边界
 
@@ -52,6 +52,7 @@ AstrBot 原生 `active_agent` 定时任务使用 `CronMessageEvent`，这个事�
 - `yebot_group_kick_member`
 - `yebot_group_mute_member`
 - `yebot_group_unmute_member`
+- `yebot_group_set_member_nickname`
 - `yebot_message_send`
 - `yebot_message_recall`
 - `yebot_forward_scene_send`
@@ -106,3 +107,4 @@ AstrBot 原生 `active_agent` 定时任务使用 `CronMessageEvent`，这个事�
 - 2026-08-04：为 AstrBot 原生 active-agent 定时事件增加显式后台工具上下文，传递群号、执行者身份、运行请求 ID 和平台 action 客户端；角色查询失败按最低权限处理。
 - 2026-08-05：补充引用段后的唤醒前缀地址恢复，保留工具权限、确认和额度边界。
 - 2026-08-06：新增主人专用系统运维只读工具，采集 CPU、内存、系统/进程运行时间和 AstrBot Token usage 观察值。
+- 2026-08-07：新增管理员和主人专用群名片修改工具，目标解析后调用 OneBot `set_group_card`。

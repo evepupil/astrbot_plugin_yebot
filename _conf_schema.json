@@ -11,7 +11,7 @@
   "observe_only": {
     "type": "bool",
     "title": "只观察模式",
-    "description": "开启后只记录决策，不自动发言、不调用模型和工具。",
+    "description": "开启后只记录决策，不自动发言；仅主人可用的系统运维只读查询仍可调用。",
     "default": true
   },
   "tool_dry_run": {
@@ -46,6 +46,12 @@
     "type": "bool",
     "title": "启用 Token 用量计算",
     "description": "启用只读的 TokenCal 综合单价和预计账单计算工具。",
+    "default": true
+  },
+  "system_info_enabled": {
+    "type": "bool",
+    "title": "启用系统运维查询",
+    "description": "启用仅主人可用的 CPU、内存、运行时间和当前进程 Token 观察统计只读工具。",
     "default": true
   },
   "confirmation_ttl_seconds": {

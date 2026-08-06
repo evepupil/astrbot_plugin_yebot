@@ -126,6 +126,12 @@ TOOL_PERMISSION_POLICIES: Final[Mapping[str, CapabilityPolicy]] = MappingProxyTy
         "token.calculate": CapabilityPolicy(
             frozenset(UserRole), PermissionScope.GLOBAL
         ),
+        "system.info.read": CapabilityPolicy(
+            frozenset({UserRole.OWNER}), PermissionScope.GLOBAL
+        ),
+        "system.token_stats.read": CapabilityPolicy(
+            frozenset({UserRole.OWNER}), PermissionScope.GLOBAL
+        ),
         "sticker.consider": CapabilityPolicy(
             frozenset(UserRole), PermissionScope.CURRENT_GROUP
         ),

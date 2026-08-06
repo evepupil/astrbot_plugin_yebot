@@ -9,6 +9,7 @@ from yebot.domain.identity import Identity, UserRole
 from yebot.runtime.jobs import JobScheduler, MemoryJobStore
 from yebot.runtime.memory import MemoryService, SQLiteMemoryStore
 from yebot.runtime.model_ratings import ModelRatingsClient
+from yebot.runtime.system_info import SystemInfoCollector, TokenUsageTracker
 from yebot.runtime.token_calculator import TokenCalculator
 from yebot.runtime.tools import ToolContext, ToolResultCode
 from yebot.runtime.tools.onebot import (
@@ -43,6 +44,8 @@ def runtime(
     memory_service: MemoryService | None = None,
     model_ratings_client: ModelRatingsClient | None = None,
     token_calculator: TokenCalculator | None = None,
+    system_info_collector: SystemInfoCollector | None = None,
+    token_usage_tracker: TokenUsageTracker | None = None,
     event: object | None = None,
 ) -> OneBotToolRuntime:
     return OneBotToolRuntime.from_client(
@@ -51,6 +54,8 @@ def runtime(
         memory_service=memory_service,
         model_ratings_client=model_ratings_client,
         token_calculator=token_calculator,
+        system_info_collector=system_info_collector,
+        token_usage_tracker=token_usage_tracker,
         event=event,
     )
 
@@ -745,6 +750,47 @@ def test_token_calculator_is_a_public_read_only_tool() -> None:
     assert result.value["estimated_total_cost_display"] == (  # type: ignore[index]
         "$0.37"
     )
+    assert client.calls == []
+
+
+def test_system_info_is_owner_only_and_does_not_call_onebot() -> None:
+    client = FakeActionClient({})
+    collector = SystemInfoCollector(sample_interval_seconds=0)
+
+    member_result = asyncio.run(
+        runtime(
+            client,
+            system_info_collector=collector,
+        ).execute("system.info", {}, tool_context(UserRole.MEMBER, group_id=""))
+    )
+    owner_result = asyncio.run(
+        runtime(
+            client,
+            system_info_collector=collector,
+        ).execute("system.info", {}, tool_context(UserRole.OWNER, group_id=""))
+    )
+
+    assert member_result.code is ToolResultCode.ROLE_DENIED
+    assert owner_result.code is ToolResultCode.SUCCESS
+    assert owner_result.value["status"] == "ok"  # type: ignore[index]
+    assert client.calls == []
+
+
+def test_system_token_stats_returns_observed_usage_for_owner() -> None:
+    client = FakeActionClient({})
+    tracker = TokenUsageTracker()
+    tracker.record_usage({"input_other": 10, "input_cached": 5, "output": 3})
+
+    result = asyncio.run(
+        runtime(client, token_usage_tracker=tracker).execute(
+            "system.token_stats",
+            {},
+            tool_context(UserRole.OWNER, group_id=""),
+        )
+    )
+
+    assert result.code is ToolResultCode.SUCCESS
+    assert result.value["total_tokens"] == 18  # type: ignore[index]
     assert client.calls == []
 
 

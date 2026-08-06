@@ -67,15 +67,17 @@ AstrBot 原生 `active_agent` 定时任务使用 `CronMessageEvent`，这个事�
 - `yebot_memory_remember`
 - `yebot_memory_recall`
 - `yebot_memory_forget`
+- `yebot_system_info`
+- `yebot_system_token_stats`
 - `yebot_delegate`
 
-所有工具最终都调用 YeBot 工具网关。记忆工具由 `MemoryService` 负责用户/群/主人范围和生命周期，自动召回只注入当前身份可见的有限参考资料。`yebot_delegate` 使用 AstrBot `tool_loop_agent` 运行受限 SubAgent，只注入白名单工具并返回文本汇总；确认入口只能消费原操作者在原群生成的一次性编号。`observe_only=true` 和 `tool_dry_run=true` 仍保持默认值。
+所有工具最终都调用 YeBot 工具网关。记忆工具由 `MemoryService` 负责用户/群/主人范围和生命周期，自动召回只注入当前身份可见的有限参考资料。`yebot_system_info` 和 `yebot_system_token_stats` 只允许主人查看运行环境和当前进程已观察到的 usage 统计，不调用 OneBot 写操作。`yebot_delegate` 使用 AstrBot `tool_loop_agent` 运行受限 SubAgent，只注入白名单工具并返回文本汇总；确认入口只能消费原操作者在原群生成的一次性编号。`observe_only=true` 时仅保留这两个无副作用的系统诊断查询，其他工具仍被拦截；`tool_dry_run=true` 仍保持默认值。
 
 ## 验证方式
 
 `tests/test_background.py` 覆盖 Cron 元数据、群角色查询、主人身份、无原始消息时的目标解析和上下文绑定；`tests/test_onebot_tools.py` 覆盖从 AstrBot 平台上下文恢复定时任务 action 客户端。
 
-`tests/test_agents.py` 覆盖可解释路由、主人未 @ 的工具直达、唤醒前缀直达、普通成员未被 @ 或唤醒的拒绝、工具/SubAgent 计划、SubAgent 发消息禁配、串行多工具、步骤上限、异常收敛、总超时和 SubAgent 结果汇总；`tests/test_replies.py`、`tests/test_permissions.py` 和 `tests/test_onebot_tools.py` 覆盖引用解析、撤回工具的引用或候选入口、角色权限、候选排除当前指令、当前群校验和 OneBot action。与 M4-M9 测试合并后，当前本地全量测试、Ruff 和 strict mypy 均通过。容器内的新增工具仍需重载后做运行态验收。
+`tests/test_agents.py` 覆盖可解释路由、主人未 @ 的工具直达、唤醒前缀直达、普通成员未被 @ 或唤醒的拒绝、工具/SubAgent 计划、SubAgent 发消息禁配、串行多工具、步骤上限、异常收敛、总超时和 SubAgent 结果汇总；`tests/test_replies.py`、`tests/test_permissions.py` 和 `tests/test_onebot_tools.py` 覆盖引用解析、撤回工具的引用或候选入口、角色权限、系统运维工具的主人限制、候选排除当前指令、当前群校验和 OneBot action。系统信息采集与 Token usage 汇总由 `tests/test_system_info.py` 覆盖。容器内的新增工具仍需重载后做运行态验收。
 
 运行中的 AstrBot 验收需要：用自然语言询问群成员、创建提醒、读取测试文件或公开网页；提出禁言请求确认直接走 dry-run/OneBot action；提出踢人请求确认先返回一次性编号，再由原操作者明确确认；提出只读整理任务确认 SubAgent 只能使用只读白名单。
 
@@ -103,3 +105,4 @@ AstrBot 原生 `active_agent` 定时任务使用 `CronMessageEvent`，这个事�
 - 2026-08-03：表情收录 Agent 改为提交明确类别、独立反应资格和置信度；主人可通过新增表情库查看与删除工具清理误收内容。
 - 2026-08-04：为 AstrBot 原生 active-agent 定时事件增加显式后台工具上下文，传递群号、执行者身份、运行请求 ID 和平台 action 客户端；角色查询失败按最低权限处理。
 - 2026-08-05：补充引用段后的唤醒前缀地址恢复，保留工具权限、确认和额度边界。
+- 2026-08-06：新增主人专用系统运维只读工具，采集 CPU、内存、系统/进程运行时间和 AstrBot Token usage 观察值。

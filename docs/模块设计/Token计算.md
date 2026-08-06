@@ -8,7 +8,7 @@
 
 ## 职责与边界
 
-模块只实现 [TokenCal](https://tokencal.chaosyn.com/) 页面当前公开的本地计算公式，不抓取页面、不发送用户数据，也不接受任意 URL。调用方必须提供总 Token 数，单位为百万 M；模型不能凭空估算未提供的数量。
+模块只实现 [TokenCal](https://tokencal.chaosyn.com/) 页面当前公开的本地计算公式，不抓取页面、不发送用户数据，也不接受任意 URL。调用方必须提供总 Token 数，单位为百万 M；模型不能凭空估算未提供的数量。实际运行中的 Token usage 统计由[系统运维工具](系统运维工具.md)单独负责。
 
 ## 结构与数据流
 
@@ -27,12 +27,13 @@ estimated_total_cost = average_price * total_tokens_million
 - 采用本地纯函数，页面没有独立后端接口，避免依赖 DOM、脚本顺序和远程可用性。
 - 保留页面默认值：`Pin=1.40`、`Pout=4.40`、`Pcache=0.26`、`Rcache=92.2%`，场景默认为国产 / Agent 交互。
 - 工具权限为 `token.calculate`，所有角色均可全局只读查询，不要求当前群，也不调用 OneBot 写操作。
+- `token.calculate` 的输入是用户明确提供的估算数量，不能读取或冒充 AstrBot 的实际 usage 统计。
 - 价格、缓存命中率和总 Token 数都限制为有限非负数；缓存命中率最大为 100%，避免模型传入无意义计算。
 - 结果同时返回原始数值和页面格式化文本，并标记固定来源，便于机器人简洁复述。
 
 ## 当前实现
 
-`models.py` 定义场景和结果对象，支持页面值及常见中文场景别名；`client.py` 实现公式、输入范围校验和结果格式化。`catalog.py` 声明 `token.calculate`，`permissions.py` 给普通成员提供全局只读权限，`onebot.py` 和 `main.py` 分别接入网关 handler 与 Agent/function tool。`token_calculator_enabled` 可关闭工具，默认启用。
+`models.py` 定义场景和结果对象，支持页面值及常见中文场景别名；`client.py` 实现公式、输入范围校验和结果格式化。`catalog.py` 声明 `token.calculate`，`permissions.py` 给普通成员提供全局只读权限，`onebot.py` 和 `main.py` 分别接入网关 handler 与 Agent/function tool。`token_calculator_enabled` 可关闭工具，默认启用。真实 usage 统计不复用本模块的计算参数。
 
 ## 验证方式
 

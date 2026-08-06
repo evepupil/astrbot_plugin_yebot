@@ -18,6 +18,7 @@ from yebot.runtime.tools import (
     ToolRegistry,
     ToolResultCode,
     ToolRisk,
+    is_observe_only_allowed_tool,
 )
 
 
@@ -257,6 +258,21 @@ def test_group_actions_have_individual_tool_permissions() -> None:
     assert GROUP_KICK_MEMBER.permission == "group.member.kick"
     assert GROUP_MUTE_MEMBER.name == "group.mute_member"
     assert GROUP_MUTE_MEMBER.permission == "group.member.mute"
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "allowed"),
+    [
+        ("system.info", True),
+        ("SYSTEM.TOKEN_STATS", True),
+        ("group.get_members", False),
+        ("message.send", False),
+    ],
+)
+def test_observe_only_mode_only_allows_system_diagnostics(
+    tool_name: str, allowed: bool
+) -> None:
+    assert is_observe_only_allowed_tool(tool_name) is allowed
 
 
 def test_gateway_requires_and_consumes_kick_confirmation() -> None:

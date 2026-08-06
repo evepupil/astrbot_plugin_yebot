@@ -95,6 +95,12 @@ def test_unknown_capability_is_denied() -> None:
         (UserRole.MEMBER, "sticker.manage", False),
         (UserRole.GROUP_ADMIN, "sticker.manage", False),
         (UserRole.OWNER, "sticker.manage", True),
+        (UserRole.MEMBER, "system.info.read", False),
+        (UserRole.GROUP_ADMIN, "system.info.read", False),
+        (UserRole.OWNER, "system.info.read", True),
+        (UserRole.MEMBER, "system.token_stats.read", False),
+        (UserRole.GROUP_ADMIN, "system.token_stats.read", False),
+        (UserRole.OWNER, "system.token_stats.read", True),
     ],
 )
 def test_tool_permission_keys(role: UserRole, permission: str, allowed: bool) -> None:

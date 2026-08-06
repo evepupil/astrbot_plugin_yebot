@@ -24,6 +24,7 @@ from .catalog import (
     MESSAGE_RECALL,
     MESSAGE_SEND,
     MODEL_RATINGS,
+    OBSERVE_ONLY_ALLOWED_TOOLS,
     REMINDER_CANCEL,
     REMINDER_CREATE,
     REMINDER_LIST,
@@ -34,9 +35,12 @@ from .catalog import (
     STICKER_LIST,
     STICKER_SEARCH,
     STICKER_SEND,
+    SYSTEM_INFO,
+    SYSTEM_TOKEN_STATS,
     TOKEN_CALCULATE,
     TOOL_CATALOG,
     WEB_FETCH,
+    is_observe_only_allowed_tool,
 )
 from .gateway import ToolGateway
 from .models import (
@@ -89,6 +93,10 @@ __all__ = [
     "STICKER_LIST",
     "STICKER_SEARCH",
     "STICKER_SEND",
+    "SYSTEM_INFO",
+    "SYSTEM_TOKEN_STATS",
+    "OBSERVE_ONLY_ALLOWED_TOOLS",
+    "is_observe_only_allowed_tool",
     "RegisteredTool",
     "ToolContext",
     "ToolDefinition",

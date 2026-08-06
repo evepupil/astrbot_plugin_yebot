@@ -252,6 +252,37 @@ TOKEN_CALCULATE = ToolDefinition(
     risk=ToolRisk.LOW,
 )
 
+SYSTEM_INFO = ToolDefinition(
+    name="system.info",
+    description=(
+        "Read current runtime CPU, memory, system uptime, process uptime, "
+        "and process memory usage."
+    ),
+    permission="system.info.read",
+    risk=ToolRisk.LOW,
+    timeout_seconds=3.0,
+)
+
+SYSTEM_TOKEN_STATS = ToolDefinition(
+    name="system.token_stats",
+    description=(
+        "Read observed LLM input, cached-input, output, and total token usage "
+        "observed by the current YeBot process."
+    ),
+    permission="system.token_stats.read",
+    risk=ToolRisk.LOW,
+)
+
+# Diagnostic queries remain useful while the bot is in its default observe-only mode.
+OBSERVE_ONLY_ALLOWED_TOOLS = frozenset({SYSTEM_INFO.name, SYSTEM_TOKEN_STATS.name})
+
+
+def is_observe_only_allowed_tool(tool_name: str) -> bool:
+    """Return whether a tool is safe to run without enabling side effects."""
+
+    return tool_name.strip().lower() in OBSERVE_ONLY_ALLOWED_TOOLS
+
+
 STICKER_CONSIDER = ToolDefinition(
     name="sticker.consider",
     description=(
@@ -397,6 +428,8 @@ TOOL_CATALOG: tuple[ToolDefinition, ...] = (
     WEB_FETCH,
     MODEL_RATINGS,
     TOKEN_CALCULATE,
+    SYSTEM_INFO,
+    SYSTEM_TOKEN_STATS,
     STICKER_CONSIDER,
     STICKER_SEARCH,
     STICKER_SEND,

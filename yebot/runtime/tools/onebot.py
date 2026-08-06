@@ -21,6 +21,7 @@ from ..model_ratings import ModelRatingsClient
 from ..release import RuntimeMetrics
 from ..replies import render_onebot_message
 from ..stickers import NativeStickerClient, StickerService, StickerStore
+from ..system_info import SystemInfoCollector, TokenUsageTracker
 from ..token_calculator import TokenCalculator
 from .background import ToolActionClient
 from .catalog import (
@@ -49,6 +50,8 @@ from .catalog import (
     STICKER_LIST,
     STICKER_SEARCH,
     STICKER_SEND,
+    SYSTEM_INFO,
+    SYSTEM_TOKEN_STATS,
     TOKEN_CALCULATE,
     WEB_FETCH,
 )
@@ -97,6 +100,19 @@ class OneBotActionClient:
         return response
 
 
+def _as_onebot_client(client: ToolActionClient | None) -> OneBotActionClient:
+    if isinstance(client, OneBotActionClient):
+        return client
+    if client is not None:
+        return OneBotActionClient(client.call_action)
+    return OneBotActionClient(_unavailable_action)
+
+
+async def _unavailable_action(action: str, **params: object) -> object:
+    del action, params
+    raise RuntimeError("OneBot action client unavailable")
+
+
 def resolve_event_action_client(
     event: object,
     *,
@@ -139,7 +155,7 @@ class OneBotToolRuntime:
     @classmethod
     def from_client(
         cls,
-        client: ToolActionClient,
+        client: ToolActionClient | None,
         *,
         dry_run: bool = True,
         guardrails: GuardrailManager | None = None,
@@ -152,13 +168,11 @@ class OneBotToolRuntime:
         memory_service: MemoryService | None = None,
         model_ratings_client: ModelRatingsClient | None = None,
         token_calculator: TokenCalculator | None = None,
+        system_info_collector: SystemInfoCollector | None = None,
+        token_usage_tracker: TokenUsageTracker | None = None,
         event: object | None = None,
     ) -> OneBotToolRuntime:
-        onebot_client = (
-            client
-            if isinstance(client, OneBotActionClient)
-            else OneBotActionClient(client.call_action)
-        )
+        onebot_client = _as_onebot_client(client)
         registry = ToolRegistry()
         handlers = _OneBotHandlers(
             onebot_client,
@@ -180,6 +194,8 @@ class OneBotToolRuntime:
             memory_service=memory_service,
             model_ratings_client=model_ratings_client,
             token_calculator=token_calculator,
+            system_info_collector=system_info_collector,
+            token_usage_tracker=token_usage_tracker,
             event=event,
         )
         registry.register(GROUP_GET_MEMBERS, handlers.get_members)
@@ -217,6 +233,10 @@ class OneBotToolRuntime:
             registry.register(MODEL_RATINGS, handlers.get_model_ratings)
         if handlers.token_calculator is not None:
             registry.register(TOKEN_CALCULATE, handlers.calculate_token_cost)
+        if handlers.system_info_collector is not None:
+            registry.register(SYSTEM_INFO, handlers.get_system_info)
+        if handlers.token_usage_tracker is not None:
+            registry.register(SYSTEM_TOKEN_STATS, handlers.get_system_token_stats)
         return cls(ToolGateway(registry, guardrails=guardrails, metrics=metrics))
 
     @classmethod
@@ -235,10 +255,16 @@ class OneBotToolRuntime:
         memory_service: MemoryService | None = None,
         model_ratings_client: ModelRatingsClient | None = None,
         token_calculator: TokenCalculator | None = None,
+        system_info_collector: SystemInfoCollector | None = None,
+        token_usage_tracker: TokenUsageTracker | None = None,
         read_cache: OneBotReadCache | None = None,
     ) -> OneBotToolRuntime | None:
         client = resolve_event_action_client(event, read_cache=read_cache)
-        if client is None:
+        if (
+            client is None
+            and system_info_collector is None
+            and token_usage_tracker is None
+        ):
             return None
         return cls.from_client(
             client,
@@ -253,6 +279,8 @@ class OneBotToolRuntime:
             memory_service=memory_service,
             model_ratings_client=model_ratings_client,
             token_calculator=token_calculator,
+            system_info_collector=system_info_collector,
+            token_usage_tracker=token_usage_tracker,
             event=event,
         )
 
@@ -287,6 +315,8 @@ class _OneBotHandlers:
         memory_service: MemoryService | None,
         model_ratings_client: ModelRatingsClient | None,
         token_calculator: TokenCalculator | None,
+        system_info_collector: SystemInfoCollector | None,
+        token_usage_tracker: TokenUsageTracker | None,
         event: object | None,
     ) -> None:
         self._client = client
@@ -298,6 +328,8 @@ class _OneBotHandlers:
         self.memory_service = memory_service
         self.model_ratings_client = model_ratings_client
         self.token_calculator = token_calculator
+        self.system_info_collector = system_info_collector
+        self.token_usage_tracker = token_usage_tracker
         self._event = event
 
     async def get_members(
@@ -704,6 +736,26 @@ class _OneBotHandlers:
             cache_price=_numeric_value(cache_price, "cache_price"),
             cache_hit_rate=_numeric_value(cache_hit_rate, "cache_hit_rate"),
         )
+
+    async def get_system_info(
+        self,
+        context: ToolContext,
+        arguments: Mapping[str, object],
+    ) -> object:
+        del context, arguments
+        if self.system_info_collector is None:
+            raise RuntimeError("system info service unavailable")
+        return await self.system_info_collector.collect()
+
+    async def get_system_token_stats(
+        self,
+        context: ToolContext,
+        arguments: Mapping[str, object],
+    ) -> object:
+        del context, arguments
+        if self.token_usage_tracker is None:
+            raise RuntimeError("token usage service unavailable")
+        return self.token_usage_tracker.snapshot()
 
     async def consider_sticker(
         self,

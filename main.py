@@ -93,6 +93,7 @@ try:
         extract_history_image_sources,
         extract_image_components,
     )
+    from .yebot.runtime.system_info import SystemInfoCollector, TokenUsageTracker
     from .yebot.runtime.targeting import TargetResolution, TargetResolver, TargetStatus
     from .yebot.runtime.token_calculator import TokenCalculator
     from .yebot.runtime.tools import (
@@ -103,6 +104,7 @@ try:
         ToolResult,
         ToolResultCode,
         build_background_tool_context,
+        is_observe_only_allowed_tool,
     )
     from .yebot.runtime.tools.onebot import (
         OneBotToolRuntime,
@@ -182,6 +184,7 @@ except ImportError:
         extract_history_image_sources,
         extract_image_components,
     )
+    from yebot.runtime.system_info import SystemInfoCollector, TokenUsageTracker
     from yebot.runtime.targeting import TargetResolution, TargetResolver, TargetStatus
     from yebot.runtime.token_calculator import TokenCalculator
     from yebot.runtime.tools import (
@@ -192,6 +195,7 @@ except ImportError:
         ToolResult,
         ToolResultCode,
         build_background_tool_context,
+        is_observe_only_allowed_tool,
     )
     from yebot.runtime.tools.onebot import (
         OneBotToolRuntime,
@@ -419,6 +423,15 @@ YeBot 工具选择规则：
   长上下文场景或价格时，把对应参数一并传入。它计算的是总 Token 对应的综合单价和
   预计费用。
   未提供的 Token 数量不要自行编造。
+- 用户询问当前机器人运行环境的 CPU、内存、系统运行时间、进程运行时间或进程内存时，
+  调用 yebot_system_info。它是只读工具，返回运行 AstrBot 的环境数据；不要把系统运行时间
+  和 YeBot 进程运行时间混为一谈。
+- 用户询问当前进程已观察到的模型 Token 统计时，调用
+  yebot_system_token_stats。它只汇总插件当前进程观察到的 AstrBot LLMResponse.usage，
+  区分普通输入、缓存输入、输出和总量；返回
+  unavailable 时表示当前没有可用的真实 usage，不要用工具调用次数或 TokenCal 默认值替代。
+  这是运行观察值，不要把它当成跨重启或多轮 tool-loop 的完整账单；需要完整历史时如实
+  说明当前工具未读取 AstrBot provider_stats。
 - 记忆工具规则属于 YeBot 的执行规则，优先于聊天人设、角色扮演和玩笑口吻。用户明确说
   “记住”“记一下”“以后都这样”时，必须调用 yebot_memory_remember，不能因为人设或
   自我认知而跳过；只有工具返回成功才可以说已经保存。
@@ -506,6 +519,13 @@ class YeBot(Star):
             TokenCalculator()
             if _as_bool(values.get("token_calculator_enabled"), True)
             else None
+        )
+        self._system_info_enabled = _as_bool(values.get("system_info_enabled"), True)
+        self._system_info_collector = (
+            SystemInfoCollector() if self._system_info_enabled else None
+        )
+        self._token_usage_tracker = (
+            TokenUsageTracker() if self._system_info_enabled else None
         )
         self._audit_writer = AuditLogWriter(
             _as_text(values.get("audit_log_path"), "data/yebot_audit.jsonl")
@@ -706,7 +726,7 @@ class YeBot(Star):
                 ToolResultCode.EXECUTION_ERROR,
                 error="event unavailable",
             )
-        if self._observe_only:
+        if self._observe_only and not is_observe_only_allowed_tool(normalized_name):
             return ToolResult(
                 normalized_name,
                 ToolResultCode.EXECUTION_DISABLED,
@@ -731,6 +751,8 @@ class YeBot(Star):
                 memory_service=self._memory_service,
                 model_ratings_client=self._model_ratings_client,
                 token_calculator=self._token_calculator,
+                system_info_collector=self._system_info_collector,
+                token_usage_tracker=self._token_usage_tracker,
                 event=event,
             )
         else:
@@ -749,6 +771,8 @@ class YeBot(Star):
                 memory_service=self._memory_service,
                 model_ratings_client=self._model_ratings_client,
                 token_calculator=self._token_calculator,
+                system_info_collector=self._system_info_collector,
+                token_usage_tracker=self._token_usage_tracker,
                 read_cache=self._onebot_read_cache,
             )
         if runtime is None:
@@ -843,6 +867,8 @@ class YeBot(Star):
                 memory_service=self._memory_service,
                 model_ratings_client=self._model_ratings_client,
                 token_calculator=self._token_calculator,
+                system_info_collector=self._system_info_collector,
+                token_usage_tracker=self._token_usage_tracker,
                 event=event,
             )
         else:
@@ -861,6 +887,8 @@ class YeBot(Star):
                 memory_service=self._memory_service,
                 model_ratings_client=self._model_ratings_client,
                 token_calculator=self._token_calculator,
+                system_info_collector=self._system_info_collector,
+                token_usage_tracker=self._token_usage_tracker,
                 read_cache=self._onebot_read_cache,
             )
         if runtime is None:
@@ -1405,6 +1433,18 @@ class YeBot(Star):
                 await self._job_task
             self._job_task = None
 
+    @filter.on_llm_response()
+    async def record_llm_token_usage(
+        self,
+        event: AstrMessageEvent,
+        response: object,
+    ) -> None:
+        """Keep a process-local total of usage reported by AstrBot providers."""
+
+        del event
+        if self._token_usage_tracker is not None:
+            self._token_usage_tracker.record_response(response)
+
     @filter.on_llm_request()
     async def guide_agent_tool_selection(
         self,
@@ -1887,6 +1927,8 @@ class YeBot(Star):
                 "web.fetch": "yebot_web_fetch",
                 "model.ratings": "yebot_model_ratings",
                 "token.calculate": "yebot_token_calculate",
+                "system.info": "yebot_system_info",
+                "system.token_stats": "yebot_system_token_stats",
                 "sticker.search": "yebot_sticker_search",
                 "memory.recall": "yebot_memory_recall",
             }
@@ -2524,6 +2566,20 @@ class YeBot(Star):
         }
         return self._encode_run(
             await self._run_single_tool(event, "token.calculate", arguments)
+        )
+
+    @filter.llm_tool(name="yebot_system_info")
+    async def llm_system_info(self, event: AstrMessageEvent) -> str:
+        """查看当前运行环境的 CPU、内存和运行时间。"""
+
+        return self._encode_run(await self._run_single_tool(event, "system.info", {}))
+
+    @filter.llm_tool(name="yebot_system_token_stats")
+    async def llm_system_token_stats(self, event: AstrMessageEvent) -> str:
+        """查看当前进程中 AstrBot 已报告的 Token usage 观察统计。"""
+
+        return self._encode_run(
+            await self._run_single_tool(event, "system.token_stats", {})
         )
 
     @filter.llm_tool(name="yebot_memory_remember")

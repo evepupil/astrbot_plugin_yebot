@@ -1,7 +1,7 @@
 # 2026-08-06 日志巡检 Review
 
 - 本轮 review 起点 commit：`c80b316`
-- 本轮 review 终点 commit：`212ea45`（追加增量复核，未修改代码）
+- 本轮 review 终点 commit：`843cd5c`（追加增量复核，未修改代码）
 - 本轮检查窗口：2026-08-06T14:39:33.193Z 至 2026-08-06T15:09:33.567Z。
 
 ## 问题 1：AstrBot 贴图工具循环错误级信号再次出现
@@ -29,6 +29,14 @@
 - 聚合：采集 77 条日志行（`astrbot` 52、`napcat` 25），出现 10 个贴图阶段和 3 条 AstrBot `tool_loop_agent` 错误级信号，其中 3 条带贴图错误标记；没有 Traceback、`execution_error`、TypeError、YeBot 导入失败、连接/DNS/TTS 失败或 `ActionFailed`。
 - 运行状态：两个容器均为 running，`RestartCount=0`、`OOMKilled=false`，没有新的启动或插件加载标记。
 - 处理：根因仍未确认，继续等待 AstrBot 工具循环/自动收录决策；本轮不改 YeBot 业务代码或运行配置。
+
+## 后续增量复核（2026-08-06T17:11:15.231Z 至 2026-08-06T17:39:34.850Z）
+
+- 状态：待决策；已知贴图工具循环异常持续，未发现新的可确认代码根因。
+- 聚合：采集 434 条日志行（`astrbot` 325、`napcat` 110），出现 51 个贴图阶段、21 条 AstrBot `tool_loop_agent` 错误级信号和 17 条贴图错误级信号；没有 `Traceback`、`execution_error`、`TypeError`、`ImportError`、`ModuleNotFoundError`、连接/DNS/TTS 失败或 `ActionFailed`。两条宽泛的导入匹配同时带成功/已加载标记，未据此判定导入失败；`system_info` 标记没有形成独立执行错误。
+- 运行状态：`astrbot` 于 `2026-08-06T17:28:33Z` 单独启动，`napcat` 未重启；两个容器当前均为 running，`RestartCount=0`、`OOMKilled=false`。重启后没有 Traceback、`execution_error` 或连接失败，且出现插件加载标记。
+- 同步边界：当前 Windows 工作区存在未提交工具改动；`main.py` 与工具文件哈希和 WSL 运行副本不一致，系统信息模块文件哈希一致。本轮未执行同步或重启，避免覆盖并行开发内容。
+- 处理：贴图问题根因仍未确认，继续等待 AstrBot 工具循环/自动收录决策；本轮不改 YeBot 业务代码或运行配置。
 
 ## 后续增量复核（2026-08-06T16:41:32.472Z 至 2026-08-06T17:09:35.290Z）
 

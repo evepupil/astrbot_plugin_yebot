@@ -77,6 +77,7 @@ try:
     from .yebot.runtime.response_media import (
         ResponseMode,
         ResponseModeStore,
+        build_response_media_guidance,
         parse_response_mode_intent,
     )
     from .yebot.runtime.stickers import (
@@ -165,6 +166,7 @@ except ImportError:
     from yebot.runtime.response_media import (
         ResponseMode,
         ResponseModeStore,
+        build_response_media_guidance,
         parse_response_mode_intent,
     )
     from yebot.runtime.stickers import (
@@ -443,11 +445,6 @@ YeBot 记忆请求强制规则（优先于任何聊天人设）：
 _MEMORY_PREHANDLED_GUIDANCE = """\
 YeBot 已经在代码侧执行了当前明确的记忆请求。不要再次调用 yebot_memory_remember，
 只根据下面的执行结果如实回复用户；成功才可以说已经保存，失败时说明原因。
-"""
-
-_RESPONSE_MEDIA_GUIDANCE = """\
-当前回复媒介已由 YeBot 选定。只生成要表达的正常内容；不要输出“语音模式”、
-“我无法发送语音”或任何媒体控制说明。
 """
 
 
@@ -1426,8 +1423,9 @@ class YeBot(Star):
         message_text = _message_text(event)
         system_prompt = request.system_prompt.rstrip()
         additions: list[str] = []
-        if response_mode is not ResponseMode.TEXT:
-            additions.append(_RESPONSE_MEDIA_GUIDANCE)
+        response_media_guidance = build_response_media_guidance(response_mode)
+        if response_media_guidance:
+            additions.append(response_media_guidance)
         if _AGENT_TOOL_GUIDANCE not in system_prompt and _has_yebot_tools(request):
             additions.append(_AGENT_TOOL_GUIDANCE)
         memory_result = await self._prehandle_memory_write(event, message_text)
@@ -1481,6 +1479,12 @@ class YeBot(Star):
             mode = self._response_mode_store.get(identity.user_id)
             if mode is None:
                 mode = self._response_mode_default
+        logger.info(
+            "YeBot response media selected mode=%s explicit=%s persistent=%s",
+            mode.value,
+            intent.mode is not None,
+            intent.persist,
+        )
         set_extra = getattr(event, "set_extra", None)
         if callable(set_extra):
             set_extra("yebot.response_mode", mode.value)
@@ -1507,9 +1511,18 @@ class YeBot(Star):
         )
         if tts_provider is None:
             logger.warning(
-                "YeBot response media requested voice but no TTS provider exists"
+                "YeBot response media requested voice but no TTS provider exists "
+                "mode=%s",
+                mode.value,
             )
             return
+        provider_model = _provider_model_id(tts_provider) or "unknown"
+        logger.info(
+            "YeBot response media rendering mode=%s provider_model=%s components=%s",
+            mode.value,
+            provider_model,
+            len(result.chain),
+        )
         converted: list[object] = []
         for component in result.chain:
             if not isinstance(component, Plain) or not component.text.strip():
@@ -1517,12 +1530,20 @@ class YeBot(Star):
                 continue
             try:
                 audio_path = await tts_provider.get_audio(component.text)
-            except Exception:
-                logger.exception("YeBot explicit TTS generation failed")
+            except Exception as exc:
+                logger.warning(
+                    "YeBot explicit TTS generation failed provider_model=%s "
+                    "error_type=%s",
+                    provider_model,
+                    type(exc).__name__,
+                )
                 converted.append(component)
                 continue
             if not audio_path:
-                logger.warning("YeBot explicit TTS returned no audio")
+                logger.warning(
+                    "YeBot explicit TTS returned no audio provider_model=%s",
+                    provider_model,
+                )
                 converted.append(component)
                 continue
             track_file = getattr(event, "track_temporary_local_file", None)

@@ -3,14 +3,28 @@ from __future__ import annotations
 from yebot.runtime.response_media import (
     ResponseMode,
     ResponseModeStore,
+    build_response_media_guidance,
     parse_response_mode_intent,
 )
 
 
 def test_parse_one_time_response_media_requests() -> None:
     assert parse_response_mode_intent("用语音回答我这个问题").mode is ResponseMode.VOICE
+    assert parse_response_mode_intent("我叫他发语音").mode is ResponseMode.VOICE
     assert parse_response_mode_intent("请用文字回复").mode is ResponseMode.TEXT
     assert parse_response_mode_intent("文字和语音都发").mode is ResponseMode.DUAL
+
+
+def test_voice_guidance_treats_media_delivery_as_available() -> None:
+    guidance = build_response_media_guidance(ResponseMode.VOICE)
+
+    assert "自动把文本转换成选定的语音并发送" in guidance
+    assert "发不了语音" in guidance
+    assert "好的，我用语音回复你" in guidance
+
+
+def test_text_mode_has_no_voice_guidance() -> None:
+    assert build_response_media_guidance(ResponseMode.TEXT) == ""
 
 
 def test_parse_persistent_response_media_request() -> None:

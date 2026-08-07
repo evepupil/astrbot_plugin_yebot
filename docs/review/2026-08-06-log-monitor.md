@@ -1,7 +1,7 @@
 # 2026-08-06 日志巡检 Review
 
 - 本轮 review 起点 commit：`c80b316`
-- 本轮 review 终点 commit：`6f60c26`（追加增量复核，未修改代码）
+- 本轮 review 终点 commit：`bc86b23`（追加增量复核，未修改代码）
 - 本轮检查窗口：2026-08-06T14:39:33.193Z 至 2026-08-06T15:09:33.567Z。
 
 ## 问题 1：AstrBot 贴图工具循环错误级信号再次出现
@@ -109,6 +109,14 @@
 - 影响：部分模型调用可能未完成；容器、OneBot/WS 链路和 YeBot 导入状态仍正常，尚无证据表明普通消息链路整体中断。
 - 候选方向：核对 AstrBot 当前 Provider 的请求格式、模型能力与上游状态；确认后再决定是否调整 Provider 配置、AstrBot 版本或重试/降级策略；必要时增加不记录请求正文的 Provider 错误分类指标。
 - 需要决策：是否允许检查或调整外部 Provider 配置、账号/凭据和部署策略；是否接受 Provider 重试或降级行为变化。
+
+## 后续增量复核（2026-08-07T02:09:43.460Z 至 2026-08-07T02:39:43.940Z）
+
+- 状态：贴图工具循环问题待决策；外部模型 Provider 请求失败继续出现，新增空模型输出/重试异常信号，根因仍未确认。
+- 聚合：采集 1217 条日志行（`astrbot` 820、`napcat` 397），出现 88 个贴图阶段、131 条 AstrBot `tool_loop_agent` 信号和 4 条 `execution_error`；4 条 `execution_error` 均关联贴图流程。另有 1 次 Traceback，脱敏异常类型包含 `EmptyModelOutputError` 和 3 条 `RetryError`，调用路径出现 1 次 `ProviderOpenAIOfficial._handle_api_error`；没有 TypeError、`BadRequestError`、`server_error`、YeBot 导入失败、DNS/TTS 失败、非贴图 `execution_error` 或 `ActionFailed`。44 条 warning 中 38 条带 provider/model 标记。
+- 关联判断：`EmptyModelOutputError`/`RetryError` 的直接日志行没有贴图标记；当前无法确认它们与已知贴图工具循环是否有因果关系，继续分别记录。
+- 运行状态：两个容器均为 running，`RestartCount=0`、`OOMKilled=false`；窗口内没有新的启动、插件加载或连接成功标记。
+- 处理：不调整 Provider 配置、凭据、AstrBot 版本或重试策略；先按待确认问题记录，不改 YeBot 业务代码或运行配置。
 
 ## 后续增量复核（2026-08-07T01:39:43.055Z 至 2026-08-07T02:09:43.460Z）
 

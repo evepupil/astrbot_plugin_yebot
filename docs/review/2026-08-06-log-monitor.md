@@ -1,7 +1,7 @@
 # 2026-08-06 日志巡检 Review
 
 - 本轮 review 起点 commit：`c80b316`
-- 本轮 review 终点 commit：`abd7303`（追加增量复核，未修改代码）
+- 本轮 review 终点 commit：`5621be0`（追加增量复核，未修改代码）
 - 本轮检查窗口：2026-08-06T14:39:33.193Z 至 2026-08-06T15:09:33.567Z。
 
 ## 问题 1：AstrBot 贴图工具循环错误级信号再次出现
@@ -199,3 +199,11 @@
 - 根因边界：`main.py` 的 `yebot_message_send` 只接收字符串，`yebot/runtime/tools/onebot.py` 将其原样作为 `send_group_msg.message` 发送；目标字段和结构化 At 生成均不存在。提醒确认路径还会把已解析 QQ 号拼进 `Plain("@QQ")`。目标解析、当前群校验和普通消息工具的 At 语义仍需要明确，不能把所有 `@数字` 文本直接转换。
 - 运行状态：`qq-ai-bot-astrbot` 与 `qq-ai-bot-napcat` 均为 running，`RestartCount=0`、`OOMKilled=false`；窗口内没有新的启动或插件加载标记。
 - 处理：不修改业务代码或运行配置；普通消息工具的结构化 At、目标校验和提醒确认输出方式列入待决策项，贴图与外部工具循环问题继续分别观察。
+
+## 后续增量复核（2026-08-07T08:14:48.790Z 至 2026-08-07T08:44:49.326Z）
+
+- 对应 commit 范围：`5621be0` 至 `5621be0`；本轮仅追加运行记录，未修改业务代码。
+- 状态：At 发送问题本窗口未复现；既有贴图工具循环问题继续待决策，未发现新的异常类型或可确认代码根因。
+- 聚合：采集 761 条脱敏日志行（`astrbot` 521、`napcat` 240），出现 172 条 AstrBot `tool_loop_agent` 信号和 3 条 `execution_error`，3 条均关联贴图流程。窗口内有 2 次 `send_group_msg`，没有 `yebot_message_send`、At 结构化段、Traceback、TypeError、Provider、DNS/TTS、导入失败、ActionFailed 或连接断线信号。
+- 运行状态：`qq-ai-bot-astrbot` 与 `qq-ai-bot-napcat` 均为 running，`RestartCount=0`、`OOMKilled=false`；窗口内没有新的启动或插件加载标记。
+- 处理：At 问题继续等待真实 QQ 验收或明确工具语义；贴图工具循环继续等待 AstrBot 适配/自动收录决策；本轮不改 YeBot 业务代码或运行配置。

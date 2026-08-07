@@ -1,7 +1,7 @@
 # 2026-08-06 日志巡检 Review
 
 - 本轮 review 起点 commit：`c80b316`
-- 本轮 review 终点 commit：`3d4ec1f`（追加增量复核，未修改代码）
+- 本轮 review 终点 commit：`abd7303`（追加增量复核，未修改代码）
 - 本轮检查窗口：2026-08-06T14:39:33.193Z 至 2026-08-06T15:09:33.567Z。
 
 ## 问题 1：AstrBot 贴图工具循环错误级信号再次出现
@@ -189,3 +189,13 @@
 - 聚合：采集 566 条脱敏日志行（`astrbot` 345、`napcat` 223），出现 27 个贴图阶段、39 条 AstrBot `tool_loop_agent` 信号和 0 条 `execution_error`。另有 3 条未关联贴图的图片功能错误、1 次未关联 action 的 `ActionFailed`（`retcode=1200`）和 1 条 WebSocket 状态标记；没有 Traceback、TypeError、Provider、DNS/TTS、YeBot 导入失败或非贴图 `execution_error`。WebSocket 信号未表现为断线或连接失败。
 - 运行状态：`qq-ai-bot-astrbot` 与 `qq-ai-bot-napcat` 均为 running，`RestartCount=0`、`OOMKilled=false`、退出码为 0；窗口内没有新的启动或插件加载标记。
 - 处理：新增信号没有暴露 YeBot handler、图片存储或 OneBot action 的明确根因，不调整业务代码、运行配置或部署；贴图工具循环与未关联运行信号继续分别等待决策/根因确认。
+
+## 后续增量复核（2026-08-07T07:39:48.332Z 至 2026-08-07T08:14:48.790Z）
+
+- 对应 commit 范围：`abd7303` 至 `abd7303`；本轮仅追加运行记录，未修改业务代码。
+- 状态：新增普通消息发送中的 At 未结构化问题，待产品/权限边界决策；既有贴图工具循环问题继续待决策，未关联贴图的工具循环异常单独观察。
+- 聚合：采集 1068 条脱敏日志行（`astrbot` 719、`napcat` 349），出现 212 条 AstrBot `tool_loop_agent` 信号、6 条贴图相关 `execution_error`、1 组未关联贴图的 `Traceback/TypeError` 和 1 次未关联 action 的 `ActionFailed`。没有 Provider、DNS/TTS、YeBot 导入失败或连接断线信号；6 条 `execution_error` 均属于贴图流程。
+- At 证据：窗口内有 6 条 `yebot_message_send` 信号和 2 次 `send_group_msg`；`16:04:59.303` 的工具发送与 `16:04:59.590` 的 OneBot 发送均只有普通 `at` 文本标记，没有 `CQ:at` 或结构化 `type=at`。窗口内唯一 `CQ:at` 信号没有关联发送 action。
+- 根因边界：`main.py` 的 `yebot_message_send` 只接收字符串，`yebot/runtime/tools/onebot.py` 将其原样作为 `send_group_msg.message` 发送；目标字段和结构化 At 生成均不存在。提醒确认路径还会把已解析 QQ 号拼进 `Plain("@QQ")`。目标解析、当前群校验和普通消息工具的 At 语义仍需要明确，不能把所有 `@数字` 文本直接转换。
+- 运行状态：`qq-ai-bot-astrbot` 与 `qq-ai-bot-napcat` 均为 running，`RestartCount=0`、`OOMKilled=false`；窗口内没有新的启动或插件加载标记。
+- 处理：不修改业务代码或运行配置；普通消息工具的结构化 At、目标校验和提醒确认输出方式列入待决策项，贴图与外部工具循环问题继续分别观察。

@@ -1,7 +1,7 @@
 # 2026-08-06 日志巡检 Review
 
 - 本轮 review 起点 commit：`c80b316`
-- 本轮 review 终点 commit：`67c22c1`（追加增量复核，未修改代码）
+- 本轮 review 终点 commit：`b3d5211`（追加增量复核，未修改代码）
 - 本轮检查窗口：2026-08-06T14:39:33.193Z 至 2026-08-06T15:09:33.567Z。
 
 ## 问题 1：AstrBot 贴图工具循环错误级信号再次出现
@@ -166,3 +166,11 @@
 - 聚合：采集 603 条脱敏日志行（`astrbot` 408、`napcat` 195），出现 84 个贴图阶段、95 条 AstrBot `tool_loop_agent` 信号和 6 条 `execution_error`；6 条 `execution_error` 均关联 `sticker.consider`/`yebot_sticker_consider`。没有 Traceback、TypeError、Provider 异常、YeBot 导入失败、连接/DNS/TTS 失败、非贴图 `execution_error` 或 `ActionFailed`。
 - 运行状态：`qq-ai-bot-astrbot` 与 `qq-ai-bot-napcat` 均为 running，`RestartCount=0`、`OOMKilled=false`、退出码为 0；窗口内没有新的启动或插件加载标记。
 - 处理：根因仍未确认，继续等待 AstrBot 工具循环/自动收录决策；本轮不改 YeBot 业务代码或运行配置。
+
+## 后续增量复核（2026-08-07T05:39:46.566Z 至 2026-08-07T06:09:46.975Z）
+
+- 状态：贴图工具循环问题待决策；新增未关联贴图的 AstrBot 工具循环异常信号，待确认外部适配根因。
+- 聚合：采集 770 条脱敏日志行（`astrbot` 544、`napcat` 226），出现 123 个贴图阶段、159 条 AstrBot `tool_loop_agent` 信号和 4 条 `execution_error`；4 条 `execution_error` 均关联 `sticker.consider`/`yebot_sticker_consider`。另有 2 组 Traceback/TypeError，异常形态均为 `unexpected-keyword`，两组均聚合到 AstrBot 工具循环，其中 1 组带贴图标记、1 组没有贴图标记；结构指纹为 `88c502f5ace51b6a971a02ab94dd518bb9d651100a947a1d58edf38af09a53cf` 与 `e3f3e40c3028b5a77c94d969013e2bca0764cdb51b7eddbcec8e68a18deb9d20`。没有 Provider、DNS/TTS、导入、连接或 `ActionFailed` 信号。
+- 根因边界：Windows 与 WSL 运行副本的 `main.py`、`yebot/runtime/tools/catalog.py` 哈希一致；当前 YeBot 贴图工具签名包含默认参数，暂未发现插件副本过期或本地参数定义不一致证据。未关联贴图的异常不与贴图问题合并，继续按外部 AstrBot 工具循环问题待确认。
+- 运行状态：`qq-ai-bot-astrbot` 与 `qq-ai-bot-napcat` 均为 running，`RestartCount=0`、`OOMKilled=false`、退出码为 0；窗口内没有新的启动或插件加载标记。
+- 处理：不调整 AstrBot 版本、工具循环配置、Provider 或 YeBot 业务代码；等待允许检查外部工具调用契约/部署策略后再决定处理方式。

@@ -99,6 +99,9 @@ TOOL_PERMISSION_POLICIES: Final[Mapping[str, CapabilityPolicy]] = MappingProxyTy
             frozenset({UserRole.OWNER, UserRole.GROUP_ADMIN}),
             PermissionScope.CURRENT_GROUP,
         ),
+        "interaction.poke": CapabilityPolicy(
+            frozenset(UserRole), PermissionScope.CURRENT_GROUP
+        ),
         "bot.manage": CapabilityPolicy(
             frozenset({UserRole.OWNER}), PermissionScope.GLOBAL
         ),

@@ -53,6 +53,7 @@ AstrBot 原生 `active_agent` 定时任务使用 `CronMessageEvent`，这个事�
 - `yebot_group_get_recent_speakers`
 - `yebot_message_get_recent_for_recall`
 - `yebot_group_get_random_member`
+- `yebot_interaction_poke`
 - `yebot_group_kick_member`
 - `yebot_group_mute_member`
 - `yebot_group_unmute_member`
@@ -84,7 +85,7 @@ AstrBot 原生 `active_agent` 定时任务使用 `CronMessageEvent`，这个事�
 
 `tests/test_agents.py` 覆盖可解释路由、主人未 @ 的工具直达、唤醒前缀直达、普通成员未被 @ 或唤醒的拒绝、工具/SubAgent 计划、SubAgent 发消息禁配、串行多工具、步骤上限、异常收敛、总超时和 SubAgent 结果汇总；`tests/test_replies.py`、`tests/test_permissions.py` 和 `tests/test_onebot_tools.py` 覆盖引用解析、撤回工具的引用或候选入口、角色权限、系统运维工具的主人限制、候选排除当前指令、当前群校验和 OneBot action。系统信息采集与 Token usage 汇总由 `tests/test_system_info.py` 覆盖。容器内的新增工具仍需重载后做运行态验收。
 
-运行中的 AstrBot 验收需要：用自然语言询问群成员、创建提醒、读取测试文件或公开网页；提出禁言请求确认直接走 dry-run/OneBot action；提出踢人请求确认先返回一次性编号，再由原操作者明确确认；提出只读整理任务确认 SubAgent 只能使用只读白名单。
+运行中的 AstrBot 验收需要：用自然语言询问群成员、创建提醒、读取测试文件或公开网页；提出禁言请求确认直接走 dry-run/OneBot action；提出踢人请求确认先返回一次性编号，再由原操作者明确确认；提出只读整理任务确认 SubAgent 只能使用只读白名单；发送“戳一下某人”并让群友戳机器人，确认主动工具和被动事件都能进入正确路径。
 
 ## 待扩展项
 
@@ -93,6 +94,7 @@ AstrBot 原生 `active_agent` 定时任务使用 `CronMessageEvent`，这个事�
 ## 改动历史
 
 - 2026-08-07：补充消息发送工具的目标参数和结构化 At 发送边界。
+- 2026-08-07：新增 `yebot_interaction_poke`，并让被戳事件携带发送者上下文唤醒主 Agent。
 
 - 2026-07-31：确定主 Agent 与 SubAgent 的边界。
 - 2026-08-01：实现可解释路由、不可变任务计划、步骤/并发/超时预算、失败收敛和结果汇总。

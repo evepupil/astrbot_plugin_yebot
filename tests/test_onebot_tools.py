@@ -233,6 +233,53 @@ def test_get_random_member_excludes_protected_and_admin_members() -> None:
     assert result.value["member"]["user_id"] == "99"  # type: ignore[index]
 
 
+def test_poke_member_calls_group_poke_in_live_mode() -> None:
+    client = FakeActionClient({"group_poke": {"status": "ok", "retcode": 0}})
+
+    result = asyncio.run(
+        runtime(client, dry_run=False).execute(
+            "interaction.poke",
+            {"user_id": "99"},
+            tool_context(UserRole.MEMBER),
+        )
+    )
+
+    assert result.code is ToolResultCode.SUCCESS
+    assert result.value == {
+        "group_id": "100",
+        "user_id": "99",
+        "poked": True,
+        "result": {
+            "dry_run": False,
+            "action": "group_poke",
+            "params": {"group_id": 100, "user_id": 99},
+            "result": {"status": "ok", "retcode": 0},
+        },
+    }
+    assert client.calls == [("group_poke", {"group_id": 100, "user_id": 99})]
+
+
+def test_poke_member_is_dry_run_without_calling_onebot() -> None:
+    client = FakeActionClient({})
+
+    result = asyncio.run(
+        runtime(client).execute(
+            "interaction.poke",
+            {"user_id": "99"},
+            tool_context(UserRole.MEMBER),
+        )
+    )
+
+    assert result.code is ToolResultCode.SUCCESS
+    assert result.value["poked"] is False  # type: ignore[index]
+    assert result.value["result"] == {  # type: ignore[index]
+        "dry_run": True,
+        "action": "group_poke",
+        "params": {"group_id": 100, "user_id": 99},
+    }
+    assert client.calls == []
+
+
 def test_memory_tools_use_the_same_gateway_and_scope_policy(tmp_path: Path) -> None:
     service = MemoryService(SQLiteMemoryStore(tmp_path / "memory.db"))
     client = FakeActionClient({})

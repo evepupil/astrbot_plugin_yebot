@@ -55,6 +55,7 @@ try:
         is_group_image_request_addressed,
         resolve_reply_image,
     )
+    from .yebot.runtime.interaction import PokeEvent, parse_poke_event
     from .yebot.runtime.jobs import (
         Job,
         JobScheduler,
@@ -98,7 +99,13 @@ try:
         extract_image_components,
     )
     from .yebot.runtime.system_info import SystemInfoCollector, TokenUsageTracker
-    from .yebot.runtime.targeting import TargetResolution, TargetResolver, TargetStatus
+    from .yebot.runtime.targeting import (
+        TargetCandidate,
+        TargetResolution,
+        TargetResolver,
+        TargetSource,
+        TargetStatus,
+    )
     from .yebot.runtime.token_calculator import TokenCalculator
     from .yebot.runtime.tools import (
         BackgroundToolContext,
@@ -150,6 +157,7 @@ except ImportError:
         is_group_image_request_addressed,
         resolve_reply_image,
     )
+    from yebot.runtime.interaction import PokeEvent, parse_poke_event
     from yebot.runtime.jobs import (
         Job,
         JobScheduler,
@@ -193,7 +201,13 @@ except ImportError:
         extract_image_components,
     )
     from yebot.runtime.system_info import SystemInfoCollector, TokenUsageTracker
-    from yebot.runtime.targeting import TargetResolution, TargetResolver, TargetStatus
+    from yebot.runtime.targeting import (
+        TargetCandidate,
+        TargetResolution,
+        TargetResolver,
+        TargetSource,
+        TargetStatus,
+    )
     from yebot.runtime.token_calculator import TokenCalculator
     from yebot.runtime.tools import (
         BackgroundToolContext,
@@ -307,6 +321,37 @@ def _event_is_addressed(event: AstrMessageEvent) -> bool:
     return bool(getattr(event, "is_at_or_wake_command", False))
 
 
+def _event_poke(event: AstrMessageEvent) -> PokeEvent | None:
+    """Return the parsed poke context attached by the platform observer."""
+
+    get_extra = getattr(event, "get_extra", None)
+    value = get_extra(_POKE_EVENT_EXTRA, None) if callable(get_extra) else None
+    return value if isinstance(value, PokeEvent) else None
+
+
+def _target_refers_to_poke_sender(value: str) -> bool:
+    """Recognize the short references users use when replying to a poke."""
+
+    normalized = "".join(value.casefold().split())
+    if not normalized:
+        return True
+    return any(
+        marker in normalized
+        for marker in (
+            "他",
+            "她",
+            "它",
+            "对方",
+            "发送者",
+            "戳我的人",
+            "刚才戳",
+            "刚刚戳",
+            "回戳",
+            "sender",
+        )
+    )
+
+
 class _ReplyWakeFilter(filter.CustomFilter):
     """Match a configured wake prefix in current text after a reply segment."""
 
@@ -342,6 +387,7 @@ _AUTO_STICKER_SEND_STATE: ContextVar[dict[str, bool] | None] = ContextVar(
 _DEFAULT_MUTE_DURATION_SECONDS = 60
 _RECALL_CANDIDATE_IDS_EXTRA = "yebot.recall.candidate_ids"
 _BACKGROUND_TOOL_CONTEXT_EXTRA = "yebot.background_tool_context"
+_POKE_EVENT_EXTRA = "yebot.poke_event"
 
 
 def _set_background_tool_mode(event: object, mode: str, enabled: bool) -> None:
@@ -393,6 +439,11 @@ YeBot 工具选择规则：
 - 用户要求向当前群发送指定内容时，调用 yebot_message_send；普通聊天回复不要调用它。
   需要真实 @ 成员时，把人名、群名片、回复对象或指代放入 target；不要把 @数字当作
   目标猜测。工具只会把已解析的唯一成员转换为 QQ At。
+- 用户说“戳一下”“戳他/她/某人”或“回戳”时，调用 yebot_interaction_poke；把目标放进
+  target，工具会按当前群的 At、昵称、回复对象、最近发言人或戳人事件发送者，
+  解析成唯一 QQ 号。
+  不要把普通聊天中的“戳”当成工具调用；只有明确互动意图才执行。收到别人戳机器人时，
+  事件上下文会告诉你发送者，可以自然回复或调用该工具回戳。
 - 管理员或主人要求撤回、删除或收回群消息时，优先调用 yebot_message_recall。当前消息有
   唯一回复目标时不传 message_id；没有回复目标时，先查询最近消息。
   根据返回的消息内容自行判断目标，再把其中的 message_id 传给撤回工具。不得编造消息 ID，
@@ -1473,6 +1524,11 @@ class YeBot(Star):
         response_mode = self._prepare_response_mode(event, current_message_text)
         if await self._prehandle_owner_reminder(event, current_message_text):
             return
+        poke_event = _event_poke(event)
+        if poke_event is not None:
+            poke_prompt = poke_event.prompt_text()
+            if poke_prompt not in request.prompt:
+                request.prompt = f"{request.prompt.rstrip()}\n\n{poke_prompt}"
         message_text = _message_text(event)
         system_prompt = request.system_prompt.rstrip()
         additions: list[str] = []
@@ -1887,6 +1943,25 @@ class YeBot(Star):
             if background is not None
             else parse_identity(raw_event, self._owner_ids)
         )
+        poke_event = _event_poke(event)
+        normalized_hint = target_hint.strip()
+        if (
+            poke_event is not None
+            and poke_event.is_targeting_self
+            and poke_event.group_id == identity.group_id
+            and _target_refers_to_poke_sender(normalized_hint)
+        ):
+            candidate = TargetCandidate(
+                user_id=poke_event.sender_id,
+                nickname=poke_event.sender_name,
+                card=poke_event.sender_card,
+            )
+            return TargetResolution(
+                TargetStatus.RESOLVED,
+                user_id=poke_event.sender_id,
+                source=TargetSource.RECENT_SPEAKER,
+                candidates=(candidate,),
+            )
         action_client = (
             background.action_client
             if background is not None
@@ -1897,7 +1972,7 @@ class YeBot(Star):
         )
         return await TargetResolver(action_client).resolve(
             event,
-            target_hint=target_hint.strip() or _current_message_text(event),
+            target_hint=normalized_hint or _current_message_text(event),
             actor_id=identity.user_id,
             bot_id=(
                 self._bot_id
@@ -2085,6 +2160,25 @@ class YeBot(Star):
         """从当前群选择一名可作为随机目标的普通成员。"""
 
         result = await self._run_single_tool(event, "group.get_random_member", {})
+        return self._encode_run(result)
+
+    @filter.llm_tool(name="yebot_interaction_poke")
+    async def llm_interaction_poke(
+        self,
+        event: AstrMessageEvent,
+        user_id: str = "",
+        target: str = "",
+    ) -> str:
+        """戳当前群的一名成员，目标可由自然语言解析。"""
+
+        resolution = await self._resolve_member_target(event, target or user_id)
+        if not resolution.resolved:
+            return self._encode_target_resolution(resolution)
+        result = await self._run_single_tool(
+            event,
+            "interaction.poke",
+            {"user_id": resolution.user_id},
+        )
         return self._encode_run(result)
 
     @filter.llm_tool(name="yebot_group_kick_member")
@@ -2927,6 +3021,36 @@ class YeBot(Star):
     ) -> None:
         await self._handle_image_generation_request(event)
 
+    def _handle_poke_event(
+        self,
+        event: AstrMessageEvent,
+        poke_event: PokeEvent,
+    ) -> None:
+        """Attach poke context and wake the Agent only when the bot was poked."""
+
+        set_extra = getattr(event, "set_extra", None)
+        if callable(set_extra):
+            set_extra(_POKE_EVENT_EXTRA, poke_event)
+        logger.info(
+            "YeBot received poke group=%s sender=%s target=%s targeting_self=%s",
+            poke_event.group_id or "private",
+            poke_event.sender_id,
+            poke_event.target_id,
+            poke_event.is_targeting_self,
+        )
+        if poke_event.is_targeting_self and not self._observe_only:
+            # AstrBot's default LLM gate checks this flag; ``is_wake`` alone is
+            # not enough for notice events that were wrapped as group messages.
+            event.is_wake = True
+            event.is_at_or_wake_command = True
+            return
+        should_call_llm = getattr(event, "should_call_llm", None)
+        if callable(should_call_llm):
+            should_call_llm(False)
+        stop_event = getattr(event, "stop_event", None)
+        if callable(stop_event):
+            stop_event()
+
     @filter.platform_adapter_type(filter.PlatformAdapterType.AIOCQHTTP)
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
     async def observe_group(self, event: AstrMessageEvent) -> None:
@@ -2936,6 +3060,13 @@ class YeBot(Star):
         if not isinstance(raw_event, Mapping):
             return
         event_bot_id = event.get_self_id().strip()
+        poke_event = parse_poke_event(
+            raw_event,
+            bot_id=event_bot_id or self._bot_id,
+        )
+        if poke_event is not None:
+            self._handle_poke_event(event, poke_event)
+            return
         observation = observe_event(
             raw_event,
             owner_ids=self._owner_ids,
@@ -2964,3 +3095,18 @@ class YeBot(Star):
 
         if self._sticker_auto_send:
             self._track_background(self._auto_send_sticker(event))
+
+    @filter.platform_adapter_type(filter.PlatformAdapterType.AIOCQHTTP)
+    @filter.event_message_type(filter.EventMessageType.PRIVATE_MESSAGE)
+    async def observe_private(self, event: AstrMessageEvent) -> None:
+        """Handle private poke notifications without treating other notices as chat."""
+
+        raw_event = getattr(event.message_obj, "raw_message", None)
+        if not isinstance(raw_event, Mapping):
+            return
+        poke_event = parse_poke_event(
+            raw_event,
+            bot_id=event.get_self_id().strip() or self._bot_id,
+        )
+        if poke_event is not None:
+            self._handle_poke_event(event, poke_event)

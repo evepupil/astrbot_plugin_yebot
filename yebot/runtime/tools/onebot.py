@@ -34,6 +34,7 @@ from .catalog import (
     GROUP_MUTE_MEMBER,
     GROUP_SET_MEMBER_NICKNAME,
     GROUP_UNMUTE_MEMBER,
+    INTERACTION_POKE,
     MEMORY_FORGET,
     MEMORY_RECALL,
     MEMORY_REMEMBER,
@@ -206,6 +207,7 @@ class OneBotToolRuntime:
         registry.register(GROUP_MUTE_MEMBER, handlers.mute_member)
         registry.register(GROUP_UNMUTE_MEMBER, handlers.unmute_member)
         registry.register(GROUP_SET_MEMBER_NICKNAME, handlers.set_member_nickname)
+        registry.register(INTERACTION_POKE, handlers.poke_member)
         registry.register(MESSAGE_SEND, handlers.send_message)
         registry.register(MESSAGE_RECALL, handlers.recall_message)
         registry.register(
@@ -450,6 +452,27 @@ class _OneBotHandlers:
             "group_id": str(group_id),
             "selection": "random",
             "member": _sanitize_member(selected),
+        }
+
+    async def poke_member(
+        self,
+        context: ToolContext,
+        arguments: Mapping[str, object],
+    ) -> object:
+        """Send one native group poke through OneBot."""
+
+        group_id = _numeric_id(context.target_group_id, "group_id")
+        user_id = _numeric_id(arguments["user_id"], "user_id")
+        result = await self._mutating_action(
+            "group_poke",
+            {"group_id": group_id, "user_id": user_id},
+        )
+        dry_run = isinstance(result, Mapping) and result.get("dry_run") is True
+        return {
+            "group_id": str(group_id),
+            "user_id": str(user_id),
+            "poked": not dry_run,
+            "result": result,
         }
 
     async def kick_member(

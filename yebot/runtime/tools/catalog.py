@@ -75,6 +75,14 @@ GROUP_GET_RANDOM_MEMBER = ToolDefinition(
     permission="group.member.read",
 )
 
+INTERACTION_POKE = ToolDefinition(
+    name="interaction.poke",
+    description="Poke one member in the current group.",
+    permission="interaction.poke",
+    parameters=(ParameterSpec("user_id", ParameterType.STRING, min_length=1),),
+    risk=ToolRisk.MEDIUM,
+)
+
 MESSAGE_SEND = ToolDefinition(
     name="message.send",
     description="Send a message to the current group.",
@@ -427,6 +435,7 @@ TOOL_CATALOG: tuple[ToolDefinition, ...] = (
     GROUP_MUTE_MEMBER,
     GROUP_UNMUTE_MEMBER,
     GROUP_SET_MEMBER_NICKNAME,
+    INTERACTION_POKE,
     MESSAGE_SEND,
     MESSAGE_RECALL,
     MESSAGE_GET_RECENT_FOR_RECALL,

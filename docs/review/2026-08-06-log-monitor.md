@@ -1,7 +1,7 @@
 # 2026-08-06 日志巡检 Review
 
 - 本轮 review 起点 commit：`c80b316`
-- 本轮 review 终点 commit：`a9872fd`（追加增量复核，未修改代码）
+- 本轮 review 终点 commit：`3d4ec1f`（追加增量复核，未修改代码）
 - 本轮检查窗口：2026-08-06T14:39:33.193Z 至 2026-08-06T15:09:33.567Z。
 
 ## 问题 1：AstrBot 贴图工具循环错误级信号再次出现
@@ -181,3 +181,11 @@
 - 聚合：采集 529 条脱敏日志行（`astrbot` 344、`napcat` 187），出现 73 个贴图阶段、76 条 AstrBot `tool_loop_agent` 信号和 2 条 `execution_error`；2 条 `execution_error` 均关联 `sticker.consider`/`yebot_sticker_consider`。没有 Traceback、TypeError、Provider 异常、YeBot 导入失败、连接/DNS/TTS 失败、非贴图 `execution_error` 或 `ActionFailed`。
 - 运行状态：`qq-ai-bot-astrbot` 与 `qq-ai-bot-napcat` 均为 running，`RestartCount=0`、`OOMKilled=false`、退出码为 0；窗口内没有新的启动或插件加载标记。
 - 处理：继续等待贴图工具循环与外部 AstrBot 工具循环问题的决策；本轮不改 YeBot 业务代码或运行配置。
+
+## 后续增量复核（2026-08-07T07:09:47.873Z 至 2026-08-07T07:39:48.332Z）
+
+- 对应 commit 范围：`3d4ec1f` 至 `3d4ec1f`；本轮仅追加运行记录，未修改业务代码。
+- 状态：贴图工具循环问题待决策；新增未关联的图片功能错误、`ActionFailed` 与 WebSocket 状态信号，根因未确认。
+- 聚合：采集 566 条脱敏日志行（`astrbot` 345、`napcat` 223），出现 27 个贴图阶段、39 条 AstrBot `tool_loop_agent` 信号和 0 条 `execution_error`。另有 3 条未关联贴图的图片功能错误、1 次未关联 action 的 `ActionFailed`（`retcode=1200`）和 1 条 WebSocket 状态标记；没有 Traceback、TypeError、Provider、DNS/TTS、YeBot 导入失败或非贴图 `execution_error`。WebSocket 信号未表现为断线或连接失败。
+- 运行状态：`qq-ai-bot-astrbot` 与 `qq-ai-bot-napcat` 均为 running，`RestartCount=0`、`OOMKilled=false`、退出码为 0；窗口内没有新的启动或插件加载标记。
+- 处理：新增信号没有暴露 YeBot handler、图片存储或 OneBot action 的明确根因，不调整业务代码、运行配置或部署；贴图工具循环与未关联运行信号继续分别等待决策/根因确认。

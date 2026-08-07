@@ -1,7 +1,7 @@
 # 2026-08-06 日志巡检 Review
 
 - 本轮 review 起点 commit：`c80b316`
-- 本轮 review 终点 commit：`f0ea753`（追加增量复核，未修改代码）
+- 本轮 review 终点 commit：`4c8ef97`（追加增量复核，未修改代码）
 - 本轮检查窗口：2026-08-06T14:39:33.193Z 至 2026-08-06T15:09:33.567Z。
 
 ## 问题 1：AstrBot 贴图工具循环错误级信号再次出现
@@ -84,5 +84,12 @@
 
 - 状态：待决策；已知贴图工具循环异常明显复现，未发现新的可确认代码根因。
 - 聚合：采集 320 条日志行（`astrbot` 230、`napcat` 90），出现 40 个贴图阶段、59 条 AstrBot `tool_loop_agent` 信号和 4 条 `execution_error`；4 条 `execution_error` 均关联 `sticker.consider`/`yebot_sticker_consider`。没有 Traceback、TypeError、YeBot 导入失败、连接/DNS/TTS 失败、非贴图 `execution_error` 或 `ActionFailed`。另有 19 条 provider/model warning，未包含失败或异常标记。
+- 运行状态：两个容器均为 running，`RestartCount=0`、`OOMKilled=false`；窗口内没有新的启动、插件加载或连接成功标记。
+- 处理：根因仍未确认，继续等待 AstrBot 工具循环/自动收录决策；本轮不改 YeBot 业务代码或运行配置。
+
+## 后续增量复核（2026-08-07T00:39:42.063Z 至 2026-08-07T01:09:42.562Z）
+
+- 状态：待决策；已知贴图工具循环错误级信号持续，未发现新的可确认代码根因。
+- 聚合：采集 267 条日志行（`astrbot` 206、`napcat` 61），出现 33 个 `yebot_sticker_consider`/贴图阶段和 70 条 AstrBot `tool_loop_agent` 信号；其中 20 条为错误级信号，17 条带贴图标记。没有 `execution_error`、Traceback、TypeError、YeBot 导入失败、连接/DNS/TTS 失败或 `ActionFailed`。另有 14 条 provider/model warning，未包含失败或异常标记。
 - 运行状态：两个容器均为 running，`RestartCount=0`、`OOMKilled=false`；窗口内没有新的启动、插件加载或连接成功标记。
 - 处理：根因仍未确认，继续等待 AstrBot 工具循环/自动收录决策；本轮不改 YeBot 业务代码或运行配置。

@@ -1,7 +1,7 @@
 # 2026-08-06 日志巡检 Review
 
 - 本轮 review 起点 commit：`c80b316`
-- 本轮 review 终点 commit：`fce7243`（追加增量复核，未修改代码）
+- 本轮 review 终点 commit：`6f60c26`（追加增量复核，未修改代码）
 - 本轮检查窗口：2026-08-06T14:39:33.193Z 至 2026-08-06T15:09:33.567Z。
 
 ## 问题 1：AstrBot 贴图工具循环错误级信号再次出现
@@ -109,3 +109,10 @@
 - 影响：部分模型调用可能未完成；容器、OneBot/WS 链路和 YeBot 导入状态仍正常，尚无证据表明普通消息链路整体中断。
 - 候选方向：核对 AstrBot 当前 Provider 的请求格式、模型能力与上游状态；确认后再决定是否调整 Provider 配置、AstrBot 版本或重试/降级策略；必要时增加不记录请求正文的 Provider 错误分类指标。
 - 需要决策：是否允许检查或调整外部 Provider 配置、账号/凭据和部署策略；是否接受 Provider 重试或降级行为变化。
+
+## 后续增量复核（2026-08-07T01:39:43.055Z 至 2026-08-07T02:09:43.460Z）
+
+- 状态：待决策；已知贴图工具循环异常持续，未发现新的可确认代码根因。
+- 聚合：采集 724 条日志行（`astrbot` 529、`napcat` 195），出现 160 个贴图阶段、215 条 AstrBot `tool_loop_agent` 信号和 6 条 `execution_error`；6 条 `execution_error` 均关联贴图流程。另有 1 个未关联 action 的 `ActionFailed`（`retcode=1200`）和 1 条未表现为失败的 WebSocket 信号；没有 Traceback、TypeError、Provider `BadRequestError`/`server_error`、YeBot 导入失败、DNS/TTS 失败或非贴图 `execution_error`。55 条 warning 中 41 条带 provider/model 标记，未包含失败或异常标记。
+- 运行状态：两个容器均为 running，`RestartCount=0`、`OOMKilled=false`；窗口内没有新的启动、插件加载或连接成功标记。
+- 处理：`ActionFailed` 暂无贴图、转发或明确 action 归因，继续观察；贴图问题根因仍未确认，本轮不改 YeBot 业务代码或运行配置。

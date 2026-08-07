@@ -1,7 +1,7 @@
 # 2026-08-06 日志巡检 Review
 
 - 本轮 review 起点 commit：`c80b316`
-- 本轮 review 终点 commit：`08ebcd5`（追加增量复核，未修改代码）
+- 本轮 review 终点 commit：`2de3f04`（追加增量复核，未修改代码）
 - 本轮检查窗口：2026-08-06T14:39:33.193Z 至 2026-08-06T15:09:33.567Z。
 
 ## 问题 1：AstrBot 贴图工具循环错误级信号再次出现
@@ -71,4 +71,11 @@
 - 状态：待决策；已知贴图工具循环异常再次出现，未发现新的可确认代码根因。
 - 聚合：采集 21 条日志行（`astrbot` 15、`napcat` 6），出现 6 个 `yebot_sticker_consider`/贴图工具循环信号和 2 条 AstrBot 工具循环错误级信号；另有 1 条 warning。没有 `execution_error`、Traceback、TypeError、YeBot 导入失败、连接/DNS/TTS 失败或 `ActionFailed`。
 - 运行状态：两个容器均为 running，`RestartCount=0`、`OOMKilled=false`；窗口内没有新的启动或插件加载标记。
+- 处理：根因仍未确认，继续等待 AstrBot 工具循环/自动收录决策；本轮不改 YeBot 业务代码或运行配置。
+
+## 后续增量复核（2026-08-06T23:39:41.671Z 至 2026-08-07T00:09:41.671Z）
+
+- 状态：待决策；已知贴图工具循环异常再次出现，未发现新的可确认代码根因。
+- 聚合：采集 56 条日志行（`astrbot` 40、`napcat` 16），出现 9 个 `yebot_sticker_consider`/工具循环信号和 3 条 AstrBot 工具循环错误级信号；另有 7 条 provider/model warning，未包含失败或异常标记。没有 `execution_error`、Traceback、TypeError、YeBot 导入失败、连接/DNS/TTS 失败或 `ActionFailed`。
+- 运行状态：两个容器均为 running，`RestartCount=0`、`OOMKilled=false`；窗口内没有新的启动、插件加载或连接成功标记。
 - 处理：根因仍未确认，继续等待 AstrBot 工具循环/自动收录决策；本轮不改 YeBot 业务代码或运行配置。

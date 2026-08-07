@@ -19,7 +19,7 @@ from ..jobs import Job, JobScheduler
 from ..memory import MemoryService
 from ..model_ratings import ModelRatingsClient
 from ..release import RuntimeMetrics
-from ..replies import render_onebot_message
+from ..replies import encode_onebot_message, render_onebot_message
 from ..stickers import NativeStickerClient, StickerService, StickerStore
 from ..system_info import SystemInfoCollector, TokenUsageTracker
 from ..token_calculator import TokenCalculator
@@ -537,7 +537,10 @@ class _OneBotHandlers:
         message = arguments["message"]
         if not isinstance(message, str):
             raise ValueError("message must be a string")
-        params: dict[str, object] = {"group_id": group_id, "message": message}
+        params: dict[str, object] = {
+            "group_id": group_id,
+            "message": encode_onebot_message(message),
+        }
         return await self._mutating_action("send_group_msg", params)
 
     async def recall_message(

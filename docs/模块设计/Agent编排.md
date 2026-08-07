@@ -41,6 +41,10 @@ AstrBot 原生 `active_agent` 定时任务使用 `CronMessageEvent`，这个事�
 
 ## 当前实现
 
+`yebot_message_send` 的目标参数沿用统一目标解析规则。模型需要真实 @ 时提交
+`target`，YeBot 只接受唯一成员并把标记交给 OneBot 结构化消息段；任意普通 `@数字`
+不会被自动转换。
+
 `models.py` 定义消息摘要、路由决定、任务步骤、计划、预算、SubAgent 请求/结果和运行结果。`router.py` 提供显式意图路由和计划构造。`orchestrator.py` 以串行步骤为默认，支持同组并发、总超时、步骤上限、异常收敛和稳定汇总。`tracker.py` 按请求 ID 累计主 Agent 连续工具调用，防止模型通过多次函数调用绕过总步骤和总超时预算。
 
 `main.py` 已通过 `@filter.llm_tool` 暴露以下 AstrBot 工具，并通过 `@filter.on_llm_request` 提供自然语言工具选择规则和主人提醒直达入口：
@@ -87,6 +91,8 @@ AstrBot 原生 `active_agent` 定时任务使用 `CronMessageEvent`，这个事�
 增加重复定时规则、人工接管、跨消息任务关联和更细的 SubAgent 配置。
 
 ## 改动历史
+
+- 2026-08-07：补充消息发送工具的目标参数和结构化 At 发送边界。
 
 - 2026-07-31：确定主 Agent 与 SubAgent 的边界。
 - 2026-08-01：实现可解释路由、不可变任务计划、步骤/并发/超时预算、失败收敛和结果汇总。

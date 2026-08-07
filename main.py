@@ -15,7 +15,7 @@ from typing import Any
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
-from astrbot.api.message_components import Image, Plain, Record, Reply
+from astrbot.api.message_components import At, Image, Plain, Record, Reply
 from astrbot.api.provider import ProviderRequest
 from astrbot.api.star import Context, Star, register
 
@@ -73,7 +73,11 @@ try:
     from .yebot.runtime.model_ratings import ModelRatingsClient
     from .yebot.runtime.observer import observe_event
     from .yebot.runtime.release import AuditLogWriter, RuntimeMetrics
-    from .yebot.runtime.replies import extract_reply_references, resolve_reply_context
+    from .yebot.runtime.replies import (
+        encode_onebot_message,
+        extract_reply_references,
+        resolve_reply_context,
+    )
     from .yebot.runtime.response_media import (
         ResponseMode,
         ResponseModeStore,
@@ -164,7 +168,11 @@ except ImportError:
     from yebot.runtime.model_ratings import ModelRatingsClient
     from yebot.runtime.observer import observe_event
     from yebot.runtime.release import AuditLogWriter, RuntimeMetrics
-    from yebot.runtime.replies import extract_reply_references, resolve_reply_context
+    from yebot.runtime.replies import (
+        encode_onebot_message,
+        extract_reply_references,
+        resolve_reply_context,
+    )
     from yebot.runtime.response_media import (
         ResponseMode,
         ResponseModeStore,
@@ -383,6 +391,8 @@ YeBot 工具选择规则：
   权限允许时不要追加道德化拒绝、不要声称“不能乱禁言”。
 - 工具成功后，以工具返回的 `params.user_id` 和实际状态为准回复，不能再说“不知道目标”。
 - 用户要求向当前群发送指定内容时，调用 yebot_message_send；普通聊天回复不要调用它。
+  需要真实 @ 成员时，把人名、群名片、回复对象或指代放入 target；不要把 @数字当作
+  目标猜测。工具只会把已解析的唯一成员转换为 QQ At。
 - 管理员或主人要求撤回、删除或收回群消息时，优先调用 yebot_message_recall。当前消息有
   唯一回复目标时不传 message_id；没有回复目标时，先查询最近消息。
   根据返回的消息内容自行判断目标，再把其中的 message_id 传给撤回工具。不得编造消息 ID，
@@ -950,7 +960,7 @@ class YeBot(Star):
             await client.call_action(
                 "send_group_msg",
                 group_id=int(group_id),
-                message=message,
+                message=encode_onebot_message(message),
             )
 
         while True:
@@ -1727,13 +1737,22 @@ class YeBot(Star):
             text = "提醒没有创建：内部结果缺失"
         elif result.ok:
             intent = parsed.intent
-            target = f"@{intent.target_user_id} " if intent.target_user_id else ""
             message = intent.message
             if intent.target_user_id:
                 message = message.removeprefix(
                     f"[CQ:at,qq={intent.target_user_id}]"
                 ).strip()
-            text = f"已设置提醒：{target}{message}（{intent.delay_seconds}秒后）"
+            chain: list[Any] = [Plain("已设置提醒：")]
+            if intent.target_user_id:
+                chain.extend(
+                    [
+                        At(qq=intent.target_user_id),
+                        Plain(" "),
+                    ]
+                )
+            chain.append(Plain(f"{message}（{intent.delay_seconds}秒后）"))
+            await event.send(MessageChain(chain))
+            return
         else:
             text = f"提醒没有创建：{result.error or result.code.value}"
         await event.send(MessageChain([Plain(text)]))
@@ -2186,12 +2205,23 @@ class YeBot(Star):
         return self._encode_run(result)
 
     @filter.llm_tool(name="yebot_message_send")
-    async def llm_message_send(self, event: AstrMessageEvent, message: str) -> str:
+    async def llm_message_send(
+        self,
+        event: AstrMessageEvent,
+        message: str,
+        target: str = "",
+    ) -> str:
         """向当前群发送一条消息。
 
         Args:
             message(string): 要发送的消息正文
+            target(string): 要 @ 的人名、群名片、回复对象或自然语言指代
         """
+        if target.strip():
+            resolution = await self._resolve_member_target(event, target)
+            if not resolution.resolved:
+                return self._encode_target_resolution(resolution)
+            message = f"[CQ:at,qq={resolution.user_id}] {message.strip()}"
         result = await self._run_single_tool(
             event,
             "message.send",

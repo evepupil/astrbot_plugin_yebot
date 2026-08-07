@@ -1,7 +1,11 @@
 import asyncio
 from types import SimpleNamespace
 
-from yebot.runtime.replies import extract_reply_references, resolve_reply_context
+from yebot.runtime.replies import (
+    encode_onebot_message,
+    extract_reply_references,
+    resolve_reply_context,
+)
 
 
 class ReplyComponent:
@@ -77,3 +81,17 @@ def test_reply_context_prefers_inline_text_when_raw_segment_duplicates_it() -> N
     assert client.calls == []
     assert context.count("消息ID=12") == 1
     assert "AstrBot 已解析的内容" in context
+
+
+def test_encode_onebot_message_converts_explicit_at_markers() -> None:
+    assert encode_onebot_message("[CQ:at,qq=42] 请看 [At:43]") == [
+        {"type": "at", "data": {"qq": "42"}},
+        {"type": "text", "data": {"text": " 请看 "}},
+        {"type": "at", "data": {"qq": "43"}},
+    ]
+
+
+def test_encode_onebot_message_keeps_plain_at_text() -> None:
+    message = "@42 只是文本 [CQ:at,qq=not-a-qq]"
+
+    assert encode_onebot_message(message) == message

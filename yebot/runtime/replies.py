@@ -188,6 +188,38 @@ _CQ_LABELS = {
     "reply": "[引用消息]",
 }
 
+_OUTBOUND_AT = re.compile(
+    r"\[CQ:at,qq=(?P<cq>\d+)(?:,[^\]]*)?\]"
+    r"|\[At:(?P<astrbot>\d+)\]",
+    re.IGNORECASE,
+)
+
+
+def encode_onebot_message(text: str) -> str | list[dict[str, object]]:
+    """Encode explicit At markers as OneBot message segments.
+
+    Only markers produced by YeBot's target parser are converted. Plain
+    ``@123`` text stays text so an arbitrary number cannot trigger a mention.
+    """
+
+    segments: list[dict[str, object]] = []
+    cursor = 0
+    for match in _OUTBOUND_AT.finditer(text):
+        if match.start() > cursor:
+            segments.append(
+                {"type": "text", "data": {"text": text[cursor : match.start()]}}
+            )
+        qq = match.group("cq") or match.group("astrbot")
+        if qq is None:
+            continue
+        segments.append({"type": "at", "data": {"qq": qq}})
+        cursor = match.end()
+    if not segments:
+        return text
+    if cursor < len(text):
+        segments.append({"type": "text", "data": {"text": text[cursor:]}})
+    return segments
+
 
 def _clean_message_string(value: object) -> str:
     text = _clean_text(value)

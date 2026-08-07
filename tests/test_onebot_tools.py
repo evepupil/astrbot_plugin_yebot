@@ -340,6 +340,32 @@ def test_admin_can_change_member_nickname_with_group_card_action() -> None:
     ]
 
 
+def test_message_send_converts_explicit_at_to_onebot_segment() -> None:
+    client = FakeActionClient({"send_group_msg": {"status": "ok", "retcode": 0}})
+
+    result = asyncio.run(
+        runtime(client, dry_run=False).execute(
+            "message.send",
+            {"message": "[CQ:at,qq=99] 请看"},
+            tool_context(UserRole.MEMBER),
+        )
+    )
+
+    assert result.code is ToolResultCode.SUCCESS
+    assert client.calls == [
+        (
+            "send_group_msg",
+            {
+                "group_id": 100,
+                "message": [
+                    {"type": "at", "data": {"qq": "99"}},
+                    {"type": "text", "data": {"text": " 请看"}},
+                ],
+            },
+        )
+    ]
+
+
 @pytest.mark.parametrize("sender_id", [99, 1592829658])
 def test_admin_can_recall_a_member_or_bot_message(sender_id: int) -> None:
     client = FakeActionClient(

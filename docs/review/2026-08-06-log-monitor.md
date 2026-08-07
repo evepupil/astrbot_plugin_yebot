@@ -207,3 +207,21 @@
 - 聚合：采集 761 条脱敏日志行（`astrbot` 521、`napcat` 240），出现 172 条 AstrBot `tool_loop_agent` 信号和 3 条 `execution_error`，3 条均关联贴图流程。窗口内有 2 次 `send_group_msg`，没有 `yebot_message_send`、At 结构化段、Traceback、TypeError、Provider、DNS/TTS、导入失败、ActionFailed 或连接断线信号。
 - 运行状态：`qq-ai-bot-astrbot` 与 `qq-ai-bot-napcat` 均为 running，`RestartCount=0`、`OOMKilled=false`；窗口内没有新的启动或插件加载标记。
 - 处理：At 问题继续等待真实 QQ 验收或明确工具语义；贴图工具循环继续等待 AstrBot 适配/自动收录决策；本轮不改 YeBot 业务代码或运行配置。
+
+## 补记后续增量复核（2026-08-07T09:44:50.171Z 至 2026-08-07T10:14:50.640Z）
+
+- 对应 commit 范围：`9fd8627` 至 `9fd8627`；本段仅追加运行记录，未修改业务代码。
+- 状态：Provider/工具循环异常继续待确认；At 发送问题继续待决策，未把日志上下文中的 At 标记直接认定为出站消息载荷。
+- 聚合：采集 4973 条脱敏日志行（`astrbot` 4877、`napcat` 96），出现 75 条 AstrBot `tool_loop_agent` 信号、20 条含 `Traceback` 的日志行和 4 条未处理异常标记；没有 `execution_error`、TypeError、导入失败、连接失败、断线或 `ActionFailed`。另有 31 条 Provider/模型错误信号和 14 条限流/额度信号，脱敏异常类型候选包含 `HTTPStatusError`、`BrokenResourceError`、`ReadError`、`TimeoutError`，无法建立与 YeBot 工具的单次调用因果链。
+- At 复核：窗口内出现 16 条 `yebot_message_send` 和 3 条 `send_group_msg` 信号；可见 At 标记未伴随 `CQ:at` 或结构化 `type=at`，但日志行包含完整上下文，无法仅凭脱敏字段确认标记属于出站 `message` 参数。源码中的字符串发送契约和提醒确认 `Plain("@QQ")` 路径保持不变，既有目标解析、权限与工具参数语义待决策。
+- 运行状态：`qq-ai-bot-astrbot` 与 `qq-ai-bot-napcat` 均为 running；没有固定插件加载标记或可确认的 YeBot 导入失败。
+- 处理：不调整 Provider、AstrBot 版本、重试策略、业务代码或运行配置；Provider 异常继续按待确认问题观察，At 与贴图问题分别保留原有待决策边界。
+
+## 后续增量复核（2026-08-07T10:14:50.640Z 至 2026-08-07T10:45:06.449Z）
+
+- 对应 commit 范围：`9fd8627` 至 `9fd8627`；本轮仅追加运行记录，未修改业务代码。
+- 状态：新增信号均可归入既有贴图工具循环和外部 Provider/限流观察项；At 发送问题本窗口仍未形成可确认的出站结构化证据。
+- 聚合：采集 2062 条脱敏日志行（`astrbot` 1885、`napcat` 176），出现 84 条 AstrBot `tool_loop_agent` 信号和 8 条 `execution_error`，8 条均关联 `sticker.consider`/贴图流程；没有 Traceback、未处理异常、TypeError、导入失败、连接失败、断线或 `ActionFailed`。另有 17 条 Provider/模型错误信号和 22 条限流/额度信号。
+- At 复核：窗口内出现 18 条 `yebot_message_send` 和 2 条 `send_group_msg` 信号，未出现 `CQ:at` 或结构化 `type=at`；At 标记仅能在工具调用上下文中观察，不能据此扩大出站消息结论。
+- 运行状态：`qq-ai-bot-astrbot` 与 `qq-ai-bot-napcat` 均为 running；没有固定插件加载标记、YeBot 导入失败或容器退出信号。
+- 处理：不修改 YeBot 业务代码或运行配置；贴图循环、Provider/限流和 At 语义继续按现有 review 条目等待决策或人工验收。

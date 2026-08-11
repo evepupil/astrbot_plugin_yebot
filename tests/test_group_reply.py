@@ -31,9 +31,13 @@ def test_no_response_placeholder_detection_catches_dynamic_participants() -> Non
     assert is_no_response_placeholder("(没有回应，这是DON在和幽幽子机器人互动)")
     assert is_no_response_placeholder("没有回应，这是xxx在xxx聊天")
     assert is_no_response_placeholder("没有回复，这是A与B的对话")
+    assert is_no_response_placeholder("图片已查看，没有要回复的内容")
+    assert is_no_response_placeholder("已查看了图片，没有需要回复的内容")
+    assert is_no_response_placeholder("图像已查看，无可回复的内容")
     assert not is_no_response_placeholder(
         "没有回应，这是DON在和幽幽子机器人互动，我来解释"
     )
+    assert not is_no_response_placeholder("图片已查看，我可以解释图片中的内容")
 
 
 def test_direct_address_and_reply_to_bot_bypass_ai_judgement() -> None:

@@ -86,6 +86,13 @@ _NO_RESPONSE_PLACEHOLDER = re.compile(
     r"(?:在|和|与|跟).{1,64}(?:互动|聊天|对话|交流|说话)(?:中)?$",
     re.UNICODE,
 )
+_IMAGE_NO_RESPONSE_PLACEHOLDER = re.compile(
+    r"(?:"
+    r"(?:图片|图像)(?:已经|已)?查看(?:完毕|完成)?"
+    r"|(?:已经|已)?查看(?:了)?(?:图片|图像)"
+    r")(?:暂时)?(?:没有|无)(?:需要|要|可)?回复(?:的)?内容$",
+    re.UNICODE,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,7 +121,13 @@ def is_no_response_placeholder(text: str) -> bool:
     normalized = _normalize_group_reply_text(text)
     if not normalized or len(normalized) > 160:
         return False
-    return _NO_RESPONSE_PLACEHOLDER.fullmatch(normalized) is not None
+    return any(
+        pattern.fullmatch(normalized) is not None
+        for pattern in (
+            _NO_RESPONSE_PLACEHOLDER,
+            _IMAGE_NO_RESPONSE_PLACEHOLDER,
+        )
+    )
 
 
 def is_contextless_clarification(text: str) -> bool:

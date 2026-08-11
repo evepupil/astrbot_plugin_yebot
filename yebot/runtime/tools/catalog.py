@@ -369,10 +369,18 @@ STICKER_LIST = ToolDefinition(
 
 STICKER_DELETE = ToolDefinition(
     name="sticker.delete",
-    description="Delete one named sticker from YeBot's shared local library.",
+    description=(
+        "Delete one sticker from YeBot's shared local library by ID or by replying "
+        "to a sticker sent by YeBot."
+    ),
     permission="sticker.manage",
     parameters=(
-        ParameterSpec("sticker_id", ParameterType.STRING, min_length=1, max_length=100),
+        ParameterSpec(
+            "sticker_id",
+            ParameterType.STRING,
+            required=False,
+            max_length=100,
+        ),
     ),
     risk=ToolRisk.MEDIUM,
 )

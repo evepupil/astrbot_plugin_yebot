@@ -45,6 +45,7 @@ class StickerRecord:
     md5: str = ""
     summary: str = ""
     native_url: str = ""
+    sent_message_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         required = {
@@ -99,6 +100,11 @@ class StickerRecord:
         object.__setattr__(self, "md5", self.md5.strip().lower()[:64])
         object.__setattr__(self, "summary", self.summary.strip()[:500])
         object.__setattr__(self, "native_url", self.native_url.strip()[:2048])
+        object.__setattr__(
+            self,
+            "sent_message_ids",
+            _clean_message_ids(self.sent_message_ids),
+        )
 
     @property
     def has_native_face(self) -> bool:
@@ -120,6 +126,15 @@ def _clean_tags(values: tuple[str, ...]) -> tuple[str, ...]:
         if normalized and normalized not in result:
             result.append(normalized)
     return tuple(result[:20])
+
+
+def _clean_message_ids(values: tuple[str, ...]) -> tuple[str, ...]:
+    result: list[str] = []
+    for value in values:
+        normalized = str(value).strip()[:128]
+        if normalized and normalized not in result:
+            result.append(normalized)
+    return tuple(result[-16:])
 
 
 def _utc(value: datetime) -> datetime:

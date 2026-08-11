@@ -19,7 +19,11 @@ from ..jobs import Job, JobScheduler
 from ..memory import MemoryService
 from ..model_ratings import ModelRatingsClient
 from ..release import RuntimeMetrics
-from ..replies import encode_onebot_message, render_onebot_message
+from ..replies import (
+    encode_onebot_message,
+    extract_reply_references,
+    render_onebot_message,
+)
 from ..stickers import NativeStickerClient, StickerService, StickerStore
 from ..system_info import SystemInfoCollector, TokenUsageTracker
 from ..token_calculator import TokenCalculator
@@ -875,12 +879,18 @@ class _OneBotHandlers:
         }
         result = await self._mutating_action("send_group_msg", params)
         dry_run = isinstance(result, Mapping) and result.get("dry_run") is True
+        sent_message_id = _action_message_id(result)
         if not dry_run:
-            self.sticker_service.mark_used(context.identity, record.sticker_id)
+            self.sticker_service.mark_used(
+                context.identity,
+                record.sticker_id,
+                sent_message_id=sent_message_id,
+            )
         return {
             "sticker_id": record.sticker_id,
             "meaning": record.meaning,
             "sent": not dry_run,
+            "message_id": sent_message_id,
             "format": send_format,
             "image": image_uri,
             "result": result,
@@ -904,13 +914,57 @@ class _OneBotHandlers:
         context: ToolContext,
         arguments: Mapping[str, object],
     ) -> object:
-        del context
-        if self.sticker_service is None:
+        service = self.sticker_service
+        if service is None:
             raise RuntimeError("sticker service unavailable")
-        sticker_id = arguments["sticker_id"]
+        sticker_id = arguments.get("sticker_id", "")
         if not isinstance(sticker_id, str):
             raise ValueError("sticker_id must be a string")
-        return self.sticker_service.delete(sticker_id)
+        if sticker_id.strip():
+            return service.delete(sticker_id)
+        return await self._delete_replied_sticker(context, service)
+
+    async def _delete_replied_sticker(
+        self,
+        context: ToolContext,
+        service: StickerService,
+    ) -> object:
+        event = self._event
+        if event is None:
+            return {"deleted": False, "reason": "reply_to_bot_sticker_required"}
+        references = extract_reply_references(event)
+        if not references:
+            return {"deleted": False, "reason": "reply_to_bot_sticker_required"}
+        reply_id = normalize_id(references[0].message_id)
+        if not reply_id.isdecimal():
+            return {"deleted": False, "reason": "reply_message_id_invalid"}
+        response = await self._client.call_uncached(
+            "get_msg",
+            message_id=int(reply_id),
+        )
+        group_id = _numeric_id(context.target_group_id, "group_id")
+        if _message_group_id(response) != group_id:
+            raise PermissionError("quoted message is outside the current group")
+        bot_id = _event_self_id(event)
+        if not bot_id:
+            return {"deleted": False, "reason": "bot_identity_unavailable"}
+        if _message_user_id(response) != bot_id:
+            return {"deleted": False, "reason": "quoted_message_is_not_from_bot"}
+        record = service.find_for_reply(reply_id, response)
+        if record is None:
+            return {
+                "deleted": False,
+                "reply_message_id": reply_id,
+                "reason": "quoted_message_is_not_a_saved_sticker",
+            }
+        result = service.delete(record.sticker_id)
+        if isinstance(result, dict):
+            return {
+                **result,
+                "reply_message_id": reply_id,
+                "matched_by": "reply_message",
+            }
+        return result
 
     async def remember_memory(
         self,
@@ -1097,6 +1151,20 @@ def _message_group_id(response: object) -> int:
     return _numeric_id(candidate.get("group_id"), "message.group_id")
 
 
+def _message_user_id(response: object) -> str:
+    candidate: object = response
+    if isinstance(response, Mapping) and isinstance(response.get("data"), Mapping):
+        candidate = response["data"]
+    if not isinstance(candidate, Mapping):
+        return ""
+    sender = candidate.get("sender")
+    if isinstance(sender, Mapping):
+        user_id = normalize_id(sender.get("user_id", sender.get("qq")))
+        if user_id:
+            return user_id
+    return normalize_id(candidate.get("user_id", candidate.get("sender_id")))
+
+
 def _order_recent_messages(
     messages: list[Mapping[str, object]],
 ) -> list[Mapping[str, object]]:
@@ -1128,6 +1196,28 @@ def _event_message_id(event: object | None) -> str:
         if raw_message_id:
             return raw_message_id
     return normalize_id(getattr(message_obj, "message_id", None))
+
+
+def _event_self_id(event: object) -> str:
+    getter = getattr(event, "get_self_id", None)
+    if callable(getter):
+        value = normalize_id(getter())
+        if value:
+            return value
+    message_obj = getattr(event, "message_obj", None)
+    raw_event = getattr(message_obj, "raw_message", None)
+    if isinstance(raw_event, Mapping):
+        return normalize_id(raw_event.get("self_id"))
+    return ""
+
+
+def _action_message_id(value: object) -> str:
+    if not isinstance(value, Mapping):
+        return ""
+    result = value.get("result")
+    if not isinstance(result, Mapping):
+        return ""
+    return normalize_id(result.get("message_id"))
 
 
 def _member_role(response: object) -> str:

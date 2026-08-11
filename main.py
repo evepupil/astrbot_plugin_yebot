@@ -542,8 +542,10 @@ YeBot 工具选择规则：
 - 用户明确说收藏“上面/之前/刚才”的几张图片或表情包，而当前消息没有附图时，调用
   yebot_sticker_collect_recent 读取当前群最近图片；不要要求用户把图片重新发一遍。
 - 只有主人要求查看或清理表情库时，才调用 yebot_sticker_list 或
-  yebot_sticker_delete。删除前先查询列表或搜索确认 sticker_id，不得编造 ID；删除仅
-  影响 YeBot 共享库，不代表删除 QQ 客户端个人收藏。
+  yebot_sticker_delete。主人回复机器人发出的表情包并要求删除、清理或不再保存时，
+  调用 yebot_sticker_delete，可以省略 sticker_id，让工具按回复目标精确定位；有明确
+  sticker_id 时先确认目标，不得编造 ID。删除仅影响 YeBot 共享库，不代表删除 QQ 客户端
+  个人收藏。
 - 用户想发表情包时，先按语境调用表情搜索，再从候选中选择合适的一张调用发送入口；
   发送成功以工具返回的 sent 和 sticker_id 为准，不能凭空声称已发送。
 - 踢人工具返回 confirmation_required 时，只展示确认编号并等待用户明确确认；
@@ -2743,9 +2745,9 @@ class YeBot(Star):
     async def llm_sticker_delete(
         self,
         event: AstrMessageEvent,
-        sticker_id: str,
+        sticker_id: str = "",
     ) -> str:
-        """从 YeBot 共享表情库删除一张已确认的表情。"""
+        """从 YeBot 共享表情库删除已确认的表情，支持回复机器人表情定位。"""
 
         return self._encode_run(
             await self._run_single_tool(

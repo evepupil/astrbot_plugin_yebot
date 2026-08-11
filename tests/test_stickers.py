@@ -45,6 +45,51 @@ class FakeActionClient:
         return {"status": "ok"}
 
 
+class ReplyDeleteActionClient(FakeActionClient):
+    def __init__(self, sender_id: int = 1592829658) -> None:
+        super().__init__()
+        self.sender_id = sender_id
+
+    async def call_action(self, action: str, **params: object) -> object:
+        self.calls.append((action, params))
+        if action == "send_group_msg":
+            return {"status": "ok", "message_id": 901}
+        if action == "get_msg":
+            return {
+                "data": {
+                    "message_id": 901,
+                    "group_id": 100,
+                    "sender": {"user_id": self.sender_id},
+                    "message": [
+                        {
+                            "type": "mface",
+                            "data": {
+                                "emoji_id": "emoji-1",
+                                "emoji_package_id": 0,
+                                "key": "native-key",
+                            },
+                        }
+                    ],
+                }
+            }
+        return {"status": "ok"}
+
+
+class ReplyEvent:
+    def __init__(self) -> None:
+        self.message_obj = SimpleNamespace(
+            raw_message={
+                "message_type": "group",
+                "group_id": 100,
+                "self_id": 1592829658,
+                "message": [{"type": "reply", "data": {"id": 901}}],
+            }
+        )
+
+    def get_self_id(self) -> str:
+        return "1592829658"
+
+
 class NativeFaceActionClient(FakeActionClient):
     async def call_action(self, action: str, **params: object) -> object:
         self.calls.append((action, params))
@@ -115,6 +160,26 @@ def test_store_deduplicates_and_recovers_from_json(tmp_path: Path) -> None:
     assert len(store.search("吐槽", group_id="100")) == 1
     restored = StickerStore(tmp_path / "stickers")
     assert restored.get(first.record.sticker_id, group_id="100") == first.record
+
+
+def test_store_tracks_sent_message_ids_across_restart(tmp_path: Path) -> None:
+    store = StickerStore(tmp_path / "stickers")
+    added = store.add(
+        b"tracked-image",
+        media_type="image/jpeg",
+        meaning="可删除表情",
+        tags=("测试",),
+        group_id="100",
+        source_message_id="source",
+        source_user_id="42",
+    )
+
+    updated = store.mark_used(added.record.sticker_id, sent_message_id="901")
+    restored = StickerStore(tmp_path / "stickers")
+
+    assert updated is not None
+    assert updated.sent_message_ids == ("901",)
+    assert restored.find_by_sent_message_id("901") == updated
 
 
 def test_sticker_library_is_shared_across_groups(tmp_path: Path) -> None:
@@ -290,6 +355,128 @@ def test_runtime_sends_saved_sticker_as_onebot_image(tmp_path: Path) -> None:
     send_call = next(call for call in client.calls if call[0] == "send_group_msg")
     assert send_call[1]["message"][0]["type"] == "image"
     assert store.get(sticker_id, group_id="100").use_count == 1
+
+
+def test_owner_can_delete_sticker_by_replying_to_bot_message(tmp_path: Path) -> None:
+    store = StickerStore(tmp_path / "stickers")
+    added = store.add(
+        b"reply-delete-image",
+        media_type="image/png",
+        meaning="误收表情",
+        tags=("清理",),
+        group_id="100",
+        source_message_id="source",
+        source_user_id="42",
+    )
+    attached = store.attach_native(
+        added.record.sticker_id,
+        emoji_id="emoji-1",
+        emoji_package_id=0,
+        key="native-key",
+    )
+    assert attached is not None
+    client = ReplyDeleteActionClient()
+    event = ReplyEvent()
+    runtime = OneBotToolRuntime.from_client(
+        OneBotActionClient(client.call_action),
+        dry_run=False,
+        sticker_store=store,
+        event=event,
+    )
+    owner = ToolContext(
+        Identity("42", "100", UserRole.OWNER, "owner"),
+        target_group_id="100",
+    )
+
+    sent = asyncio.run(
+        runtime.execute(
+            "sticker.send",
+            {"sticker_id": added.record.sticker_id},
+            owner,
+        )
+    )
+    deleted = asyncio.run(runtime.execute("sticker.delete", {}, owner))
+
+    assert sent.code is ToolResultCode.SUCCESS
+    assert sent.value["message_id"] == "901"
+    assert deleted.code is ToolResultCode.SUCCESS
+    assert deleted.value["deleted"] is True
+    assert deleted.value["reply_message_id"] == "901"
+    assert deleted.value["matched_by"] == "reply_message"
+    assert store.get(added.record.sticker_id) is None
+
+
+def test_service_matches_old_reply_by_native_face_fields(tmp_path: Path) -> None:
+    store = StickerStore(tmp_path / "stickers")
+    added = store.add(
+        b"legacy-native-image",
+        media_type="image/png",
+        meaning="旧表情",
+        tags=(),
+        group_id="100",
+        source_message_id="source",
+        source_user_id="42",
+    )
+    attached = store.attach_native(
+        added.record.sticker_id,
+        emoji_id="emoji-old",
+        emoji_package_id=3,
+        key="old-key",
+    )
+    assert attached is not None
+
+    resolved = StickerService(store).find_for_reply(
+        "901",
+        {
+            "data": {
+                "message": [
+                    {
+                        "type": "mface",
+                        "data": {
+                            "emojiId": "emoji-old",
+                            "emojiPackageId": 3,
+                            "key": "old-key",
+                        },
+                    }
+                ]
+            }
+        },
+    )
+
+    assert resolved == attached
+
+
+def test_reply_delete_ignores_a_member_message(tmp_path: Path) -> None:
+    store = StickerStore(tmp_path / "stickers")
+    added = store.add(
+        b"member-message-image",
+        media_type="image/png",
+        meaning="保留表情",
+        tags=(),
+        group_id="100",
+        source_message_id="source",
+        source_user_id="42",
+    )
+    store.mark_used(added.record.sticker_id, sent_message_id="901")
+    runtime = OneBotToolRuntime.from_client(
+        OneBotActionClient(ReplyDeleteActionClient(sender_id=99).call_action),
+        dry_run=False,
+        sticker_store=store,
+        event=ReplyEvent(),
+    )
+    owner = ToolContext(
+        Identity("42", "100", UserRole.OWNER, "owner"),
+        target_group_id="100",
+    )
+
+    result = asyncio.run(runtime.execute("sticker.delete", {}, owner))
+
+    assert result.code is ToolResultCode.SUCCESS
+    assert result.value == {
+        "deleted": False,
+        "reason": "quoted_message_is_not_from_bot",
+    }
+    assert store.get(added.record.sticker_id) is not None
 
 
 def test_collection_calls_native_custom_face_action(tmp_path: Path) -> None:

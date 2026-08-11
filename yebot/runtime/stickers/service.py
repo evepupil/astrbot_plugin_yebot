@@ -188,6 +188,27 @@ class StickerService:
             "meaning": record.meaning if record is not None else "",
         }
 
+    def find_for_reply(self, message_id: str, message: object) -> StickerRecord | None:
+        """Resolve a saved sticker from a YeBot message being replied to."""
+
+        tracked = self.store.find_by_sent_message_id(message_id)
+        if tracked is not None:
+            return tracked
+        records = self.store.list_all()
+        for segment in _message_segments(message):
+            segment_type = str(segment.get("type", "")).strip().lower()
+            data = segment.get("data")
+            payload = data if isinstance(data, Mapping) else {}
+            if segment_type == "mface":
+                match = _match_native_face(records, payload)
+            elif segment_type == "image":
+                match = _match_image(records, payload)
+            else:
+                continue
+            if match is not None:
+                return match
+        return None
+
     async def ensure_native(self, record: StickerRecord) -> tuple[StickerRecord, bool]:
         """Add one local record to QQ's custom-face library when needed."""
 
@@ -270,8 +291,18 @@ class StickerService:
             raise KeyError("sticker not found")
         return record, self.store.file_path(record)
 
-    def mark_used(self, identity: Identity, sticker_id: str) -> StickerRecord:
-        record = self.store.mark_used(sticker_id, group_id=identity.group_id)
+    def mark_used(
+        self,
+        identity: Identity,
+        sticker_id: str,
+        *,
+        sent_message_id: str = "",
+    ) -> StickerRecord:
+        record = self.store.mark_used(
+            sticker_id,
+            group_id=identity.group_id,
+            sent_message_id=sent_message_id,
+        )
         if record is None:
             raise KeyError("sticker not found")
         return record
@@ -307,6 +338,91 @@ async def _read_image(component: object) -> tuple[bytes, str, str]:
 def _event_message_id(event: object) -> str:
     message_obj = getattr(event, "message_obj", None)
     return str(getattr(message_obj, "message_id", "")).strip()[:128]
+
+
+def _message_segments(value: object) -> tuple[Mapping[str, object], ...]:
+    data: object = value
+    if isinstance(value, Mapping):
+        data = value.get("data", value)
+    if not isinstance(data, Mapping):
+        return ()
+    message = data.get("message")
+    if not isinstance(message, list):
+        return ()
+    return tuple(item for item in message if isinstance(item, Mapping))
+
+
+def _match_native_face(
+    records: tuple[StickerRecord, ...],
+    payload: Mapping[str, object],
+) -> StickerRecord | None:
+    emoji_id = _reference_text(payload, "emoji_id", "emojiId", "emojiID")
+    key = _reference_text(payload, "key", "emoji_key", "emojiKey")
+    res_id = _reference_text(payload, "res_id", "resId", "resource_id", "resourceId")
+    package = _reference_int(
+        payload,
+        "emoji_package_id",
+        "emojiPackageId",
+        "package_id",
+        "packageId",
+        "epId",
+    )
+    matches = [
+        record
+        for record in records
+        if (
+            emoji_id
+            and key
+            and record.has_native_face
+            and record.emoji_id == emoji_id
+            and record.key == key
+            and (package is None or record.emoji_package_id == package)
+        )
+        or (res_id and record.res_id and record.res_id == res_id)
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _match_image(
+    records: tuple[StickerRecord, ...],
+    payload: Mapping[str, object],
+) -> StickerRecord | None:
+    reference = _reference_text(
+        payload,
+        "url",
+        "image_url",
+        "imageUrl",
+        "file",
+    )
+    if not reference:
+        return None
+    normalized = _normalize_media_reference(reference)
+    matches = [
+        record
+        for record in records
+        if record.native_url
+        and _normalize_media_reference(record.native_url) == normalized
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _reference_text(mapping: Mapping[str, object], *keys: str) -> str:
+    for key in keys:
+        value = mapping.get(key)
+        if isinstance(value, (str, int, float)) and not isinstance(value, bool):
+            text = str(value).strip()
+            if text:
+                return text
+    return ""
+
+
+def _reference_int(mapping: Mapping[str, object], *keys: str) -> int | None:
+    value = _reference_text(mapping, *keys)
+    return int(value) if value.isdecimal() else None
+
+
+def _normalize_media_reference(value: str) -> str:
+    return value.strip().split("?", 1)[0].rstrip("/")
 
 
 def _is_image_component(component: object) -> bool:

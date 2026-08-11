@@ -9,6 +9,7 @@ import re
 import tempfile
 from collections.abc import Iterable
 from contextlib import suppress
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from typing import NamedTuple
@@ -118,35 +119,40 @@ class StickerStore:
         candidates.sort(key=lambda item: (-item[0], -item[1].created_at.timestamp()))
         return tuple(record for _, record in candidates[:bounded_limit])
 
-    def mark_used(self, sticker_id: str, *, group_id: str = "") -> StickerRecord | None:
+    def mark_used(
+        self,
+        sticker_id: str,
+        *,
+        group_id: str = "",
+        sent_message_id: str = "",
+    ) -> StickerRecord | None:
         record = self.get(sticker_id, group_id=group_id)
         if record is None:
             return None
-        updated = StickerRecord(
-            sticker_id=record.sticker_id,
-            digest=record.digest,
-            relative_path=record.relative_path,
-            media_type=record.media_type,
-            meaning=record.meaning,
-            tags=record.tags,
-            group_id=record.group_id,
-            source_message_id=record.source_message_id,
-            source_user_id=record.source_user_id,
-            asset_kind=record.asset_kind,
-            confidence=record.confidence,
-            created_at=record.created_at,
+        updated = replace(
+            record,
             use_count=record.use_count + 1,
-            emoji_id=record.emoji_id,
-            emoji_package_id=record.emoji_package_id,
-            key=record.key,
-            res_id=record.res_id,
-            md5=record.md5,
-            summary=record.summary,
-            native_url=record.native_url,
+            sent_message_ids=_append_message_id(
+                record.sent_message_ids,
+                sent_message_id,
+            ),
         )
         self._records[updated.sticker_id] = updated
         self._flush()
         return updated
+
+    def find_by_sent_message_id(self, message_id: str) -> StickerRecord | None:
+        """Find a sticker sent by YeBot using the originating QQ message ID."""
+
+        normalized = message_id.strip()
+        if not normalized:
+            return None
+        matches = [
+            record
+            for record in self._records.values()
+            if normalized in record.sent_message_ids
+        ]
+        return matches[0] if len(matches) == 1 else None
 
     def attach_native(
         self,
@@ -186,6 +192,7 @@ class StickerStore:
             md5=md5,
             summary=summary,
             native_url=native_url,
+            sent_message_ids=record.sent_message_ids,
         )
         self._records[updated.sticker_id] = updated
         self._flush()
@@ -304,6 +311,7 @@ def _encode(record: StickerRecord) -> dict[str, object]:
         "md5": record.md5,
         "summary": record.summary,
         "native_url": record.native_url,
+        "sent_message_ids": list(record.sent_message_ids),
     }
 
 
@@ -313,6 +321,9 @@ def _decode(value: object) -> StickerRecord | None:
     tags = value.get("tags", [])
     if not isinstance(tags, list):
         return None
+    sent_message_ids = value.get("sent_message_ids", [])
+    if not isinstance(sent_message_ids, list):
+        sent_message_ids = []
     try:
         return StickerRecord(
             sticker_id=str(value["sticker_id"]),
@@ -335,6 +346,11 @@ def _decode(value: object) -> StickerRecord | None:
             md5=str(value.get("md5", "")),
             summary=str(value.get("summary", "")),
             native_url=str(value.get("native_url", "")),
+            sent_message_ids=tuple(
+                str(item)
+                for item in sent_message_ids
+                if isinstance(item, (str, int)) and not isinstance(item, bool)
+            ),
         )
     except (KeyError, TypeError, ValueError, OverflowError):
         return None
@@ -354,6 +370,13 @@ def _write_bytes_atomic(path: Path, data: bytes) -> None:
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)
+
+
+def _append_message_id(values: tuple[str, ...], message_id: str) -> tuple[str, ...]:
+    normalized = message_id.strip()[:128]
+    if not normalized or normalized in values:
+        return values
+    return (*values, normalized)[-16:]
 
 
 def _safe_suffix(value: str) -> str:

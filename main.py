@@ -49,6 +49,7 @@ try:
         build_group_reply_judgement_prompt,
         initial_group_reply_decision,
         is_contextless_clarification,
+        is_no_response_placeholder,
         judgement_decision,
         parse_group_reply_judgement,
     )
@@ -165,6 +166,7 @@ except ImportError:
         build_group_reply_judgement_prompt,
         initial_group_reply_decision,
         is_contextless_clarification,
+        is_no_response_placeholder,
         judgement_decision,
         parse_group_reply_judgement,
     )
@@ -473,15 +475,16 @@ def _should_suppress_contextless_group_reply(
     event: AstrMessageEvent,
     response_text: str,
 ) -> bool:
-    """Suppress vague clarification output from an unaddressed group turn."""
+    """Suppress contextless clarification or meta output from group turns."""
 
-    if not is_contextless_clarification(response_text):
+    if not (
+        is_contextless_clarification(response_text)
+        or is_no_response_placeholder(response_text)
+    ):
         return False
     get_extra = getattr(event, "get_extra", None)
     decision = (
-        get_extra(_GROUP_REPLY_DECISION_EXTRA, None)
-        if callable(get_extra)
-        else None
+        get_extra(_GROUP_REPLY_DECISION_EXTRA, None) if callable(get_extra) else None
     )
     return (
         isinstance(decision, GroupReplyDecision)

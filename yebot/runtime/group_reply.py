@@ -81,6 +81,11 @@ _DEFINITION_QUESTION = re.compile(
     r"[\w\u3400-\u9fff]{1,32}(?:是什么意思|什么意思|是什么|是啥|啥意思)$",
     re.UNICODE,
 )
+_NO_RESPONSE_PLACEHOLDER = re.compile(
+    r"(?:没有回应|没有回复|无人回应|无人回复)这是.{1,48}"
+    r"(?:在|和|与|跟).{1,64}(?:互动|聊天|对话|交流|说话)(?:中)?$",
+    re.UNICODE,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,11 +103,24 @@ def astrbot_call_llm_flag(should_call_llm: bool) -> bool:
     return not should_call_llm
 
 
+def _normalize_group_reply_text(text: str) -> str:
+    normalized = re.sub(r"[\W_]+", "", text.casefold(), flags=re.UNICODE)
+    return re.sub(r"[啊呀吗嘛呢哦哟诶哈]+", "", normalized)
+
+
+def is_no_response_placeholder(text: str) -> bool:
+    """Return whether text is a model-generated no-response meta message."""
+
+    normalized = _normalize_group_reply_text(text)
+    if not normalized or len(normalized) > 160:
+        return False
+    return _NO_RESPONSE_PLACEHOLDER.fullmatch(normalized) is not None
+
+
 def is_contextless_clarification(text: str) -> bool:
     """Return whether text is only a short request for missing context."""
 
-    normalized = re.sub(r"[\W_]+", "", text.casefold(), flags=re.UNICODE)
-    normalized = re.sub(r"[啊呀吗嘛呢哦哟诶哈]+", "", normalized)
+    normalized = _normalize_group_reply_text(text)
     if not normalized or len(normalized) > 80:
         return False
     if _DEFINITION_QUESTION.fullmatch(normalized):

@@ -4,6 +4,7 @@ from yebot.runtime.group_reply import (
     build_group_reply_judgement_prompt,
     initial_group_reply_decision,
     is_contextless_clarification,
+    is_no_response_placeholder,
     judgement_decision,
     parse_group_reply_judgement,
 )
@@ -23,6 +24,16 @@ def test_contextless_clarification_detection_catches_vague_replies() -> None:
     assert is_contextless_clarification("量子纠缠是什么意思")
     assert not is_contextless_clarification("啥意思？我给你解释一下量子纠缠")
     assert not is_contextless_clarification("这个问题可以从两个方面回答")
+
+
+def test_no_response_placeholder_detection_catches_dynamic_participants() -> None:
+    assert is_no_response_placeholder("（没有回应，这是别人在和机器人互动）")
+    assert is_no_response_placeholder("(没有回应，这是DON在和幽幽子机器人互动)")
+    assert is_no_response_placeholder("没有回应，这是xxx在xxx聊天")
+    assert is_no_response_placeholder("没有回复，这是A与B的对话")
+    assert not is_no_response_placeholder(
+        "没有回应，这是DON在和幽幽子机器人互动，我来解释"
+    )
 
 
 def test_direct_address_and_reply_to_bot_bypass_ai_judgement() -> None:

@@ -30,6 +30,12 @@ class GroupReplyDecision:
     needs_ai_judgement: bool = False
 
 
+def astrbot_call_llm_flag(should_call_llm: bool) -> bool:
+    """Convert our allow/deny decision to AstrBot's blocking flag."""
+
+    return not should_call_llm
+
+
 def has_meaningful_group_content(
     text: str,
     *,

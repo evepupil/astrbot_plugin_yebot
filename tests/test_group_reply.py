@@ -1,10 +1,16 @@
 from yebot.runtime.group_reply import (
     GroupReplyReason,
+    astrbot_call_llm_flag,
     build_group_reply_judgement_prompt,
     initial_group_reply_decision,
     judgement_decision,
     parse_group_reply_judgement,
 )
+
+
+def test_group_reply_decision_maps_to_astrbot_blocking_flag() -> None:
+    assert astrbot_call_llm_flag(True) is False
+    assert astrbot_call_llm_flag(False) is True
 
 
 def test_direct_address_and_reply_to_bot_bypass_ai_judgement() -> None:

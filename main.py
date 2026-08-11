@@ -44,6 +44,7 @@ try:
     )
     from .yebot.runtime.group_reply import (
         GroupReplyDecision,
+        astrbot_call_llm_flag,
         build_group_reply_judgement_prompt,
         initial_group_reply_decision,
         judgement_decision,
@@ -157,6 +158,7 @@ except ImportError:
     )
     from yebot.runtime.group_reply import (
         GroupReplyDecision,
+        astrbot_call_llm_flag,
         build_group_reply_judgement_prompt,
         initial_group_reply_decision,
         judgement_decision,
@@ -1047,7 +1049,7 @@ class YeBot(Star):
 
         setter = getattr(event, "should_call_llm", None)
         if callable(setter):
-            setter(should_call_llm)
+            setter(astrbot_call_llm_flag(should_call_llm))
         if should_call_llm:
             event.is_wake = True
             event.is_at_or_wake_command = True

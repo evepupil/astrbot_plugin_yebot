@@ -3,6 +3,7 @@ from yebot.runtime.group_reply import (
     astrbot_call_llm_flag,
     build_group_reply_judgement_prompt,
     initial_group_reply_decision,
+    is_contextless_clarification,
     judgement_decision,
     parse_group_reply_judgement,
 )
@@ -11,6 +12,16 @@ from yebot.runtime.group_reply import (
 def test_group_reply_decision_maps_to_astrbot_blocking_flag() -> None:
     assert astrbot_call_llm_flag(True) is False
     assert astrbot_call_llm_flag(False) is True
+
+
+def test_contextless_clarification_detection_catches_vague_replies() -> None:
+    assert is_contextless_clarification("啥意思？你这是在说啥")
+    assert is_contextless_clarification("啥意思 f佬是啥")
+    assert is_contextless_clarification("你在说什么鬼东西")
+    assert is_contextless_clarification("啥意思 没听懂")
+    assert is_contextless_clarification("量子纠缠是什么意思")
+    assert not is_contextless_clarification("啥意思？我给你解释一下量子纠缠")
+    assert not is_contextless_clarification("这个问题可以从两个方面回答")
 
 
 def test_direct_address_and_reply_to_bot_bypass_ai_judgement() -> None:
@@ -69,3 +80,5 @@ def test_judgement_prompt_contains_both_context_parts() -> None:
     assert "quoted" in prompt
     assert "recent" in prompt
     assert '"should_reply"' in prompt
+    assert "enough concrete information" in prompt
+    assert "what does X mean?" in prompt

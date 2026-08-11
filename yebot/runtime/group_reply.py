@@ -21,6 +21,57 @@ class GroupReplyReason(StrEnum):
     JUDGEMENT_UNAVAILABLE = "judgement_unavailable"
 
 
+_CLARIFICATION_MARKERS = (
+    "你这是在说什么",
+    "你这是在说啥",
+    "你在说什么鬼东西",
+    "你在说什么鬼",
+    "你在说什么",
+    "你在说啥",
+    "你说什么",
+    "你说啥",
+    "说的啥",
+    "你想表达什么",
+    "能说清楚吗",
+    "具体说说",
+    "说清楚点",
+    "没听懂",
+    "听不懂",
+    "没明白",
+    "不明白",
+    "不懂",
+    "是什么意思",
+    "什么意思",
+    "啥意思",
+    "这是什么",
+    "这啥",
+    "什么情况",
+    "啥情况",
+    "怎么回事",
+    "咋回事",
+    "怎么了",
+    "咋了",
+)
+_ANSWERING_MARKERS = (
+    "解释",
+    "意思是",
+    "指的是",
+    "指的就是",
+    "简单说",
+    "可以理解",
+    "原因是",
+    "因为",
+    "答案是",
+    "这里是",
+    "也就是",
+    "所谓",
+)
+_DEFINITION_QUESTION = re.compile(
+    r"[\w\u3400-\u9fff]{1,32}(?:是什么意思|什么意思|是什么|是啥|啥意思)$",
+    re.UNICODE,
+)
+
+
 @dataclass(frozen=True, slots=True)
 class GroupReplyDecision:
     """A transient, explainable decision for one group message."""
@@ -34,6 +85,30 @@ def astrbot_call_llm_flag(should_call_llm: bool) -> bool:
     """Convert our allow/deny decision to AstrBot's blocking flag."""
 
     return not should_call_llm
+
+
+def is_contextless_clarification(text: str) -> bool:
+    """Return whether text is only a short request for missing context."""
+
+    normalized = re.sub(r"[\W_]+", "", text.casefold(), flags=re.UNICODE)
+    normalized = re.sub(r"[啊呀吗嘛呢哦哟诶哈]+", "", normalized)
+    if not normalized or len(normalized) > 80:
+        return False
+    if _DEFINITION_QUESTION.fullmatch(normalized):
+        return True
+
+    for marker in sorted(_CLARIFICATION_MARKERS, key=len, reverse=True):
+        if normalized.startswith(marker):
+            remainder = normalized[len(marker) :]
+            return not any(cue in remainder for cue in _ANSWERING_MARKERS)
+
+    remainder = normalized
+    matched = False
+    for marker in sorted(_CLARIFICATION_MARKERS, key=len, reverse=True):
+        if marker in remainder:
+            remainder = remainder.replace(marker, "")
+            matched = True
+    return matched and not remainder
 
 
 def has_meaningful_group_content(
@@ -85,16 +160,20 @@ def build_group_reply_judgement_prompt(
     referenced = reply_context.strip()[:2400] or "[no quoted message]"
     recent = recent_context.strip()[:3600] or "[no recent group history]"
     return (
-        "You are a quiet group-chat reply gate for a QQ bot. Decide only whether "
-        "the main assistant should answer this message. Return one JSON object "
+        "You are a quiet group-chat answerability gate for a QQ bot. Decide only "
+        "whether the main assistant can give a useful answer from the information "
+        "shown. Return one JSON object "
         'with exactly one boolean field: {"should_reply": true} or '
         '{"should_reply": false}. Do not answer the user.\n\n'
-        "Allow only when the current message and context show that the user is "
-        "talking to this bot or continuing a conversation with it. A message "
-        "that is merely overheard group chatter must be denied. Deny messages "
-        "with no useful conversational content, including contextless requests "
-        "such as 'what are you talking about?', 'what is X?', or 'what does X "
-        "mean?'. A direct, concrete question addressed to the bot is allowed.\n\n"
+        "Allow when the current message, quoted message, or recent history gives "
+        "enough concrete information for a useful response, even when nobody "
+        "names the bot. Deny overheard chatter when it has no answerable point. "
+        "Deny when the only plausible response would ask the user to explain "
+        "what they mean, identify an undefined subject, or provide missing "
+        "context. This includes short messages such as 'what are you talking "
+        "about?', 'what is X?', 'what does X mean?', 'what does that mean?', "
+        "or 'can you explain?'. A direct question addressed to the bot may be "
+        "answered even when it asks for clarification.\n\n"
         f"Current message:\n{current}\n\n"
         f"Quoted reply context:\n{referenced}\n\n"
         f"Recent group history (sender labels are redacted):\n{recent}"

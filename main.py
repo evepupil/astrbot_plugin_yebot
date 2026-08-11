@@ -44,9 +44,11 @@ try:
     )
     from .yebot.runtime.group_reply import (
         GroupReplyDecision,
+        GroupReplyReason,
         astrbot_call_llm_flag,
         build_group_reply_judgement_prompt,
         initial_group_reply_decision,
+        is_contextless_clarification,
         judgement_decision,
         parse_group_reply_judgement,
     )
@@ -158,9 +160,11 @@ except ImportError:
     )
     from yebot.runtime.group_reply import (
         GroupReplyDecision,
+        GroupReplyReason,
         astrbot_call_llm_flag,
         build_group_reply_judgement_prompt,
         initial_group_reply_decision,
+        is_contextless_clarification,
         judgement_decision,
         parse_group_reply_judgement,
     )
@@ -431,11 +435,13 @@ _GROUP_REPLY_DECISION_EXTRA = "yebot.group_reply_decision"
 _REPLY_TO_BOT_EXTRA = "yebot.reply_to_bot"
 _AUTO_STICKER_QUEUED_EXTRA = "yebot.auto_sticker_queued"
 _GROUP_REPLY_GUIDANCE = """\
-For group messages, answer only when the current context contains a concrete
-conversation with YeBot. Do not manufacture a response to overheard chatter.
-If the context has no useful thing to answer, return an empty completion instead
-of a filler question or explanation. A clear question directly addressed to the
-bot remains valid, including a question about a named subject.
+For group messages, answer only when the available message and context contain
+enough concrete information for a useful response. The context does not need to
+name YeBot. Do not manufacture a response to overheard chatter. If the best
+possible response would ask what the user means, ask for missing context, or
+repeat a vague clarification question, return an empty completion instead. A
+clear question directly addressed to the bot remains valid, including a question
+about a named subject.
 """
 
 
@@ -461,6 +467,26 @@ def _event_allows_background_tools(event: object) -> bool:
         return False
     modes = get_extra(_BACKGROUND_TOOL_MODES_EXTRA, ())
     return isinstance(modes, (list, tuple, set)) and bool(modes)
+
+
+def _should_suppress_contextless_group_reply(
+    event: AstrMessageEvent,
+    response_text: str,
+) -> bool:
+    """Suppress vague clarification output from an unaddressed group turn."""
+
+    if not is_contextless_clarification(response_text):
+        return False
+    get_extra = getattr(event, "get_extra", None)
+    decision = (
+        get_extra(_GROUP_REPLY_DECISION_EXTRA, None)
+        if callable(get_extra)
+        else None
+    )
+    return (
+        isinstance(decision, GroupReplyDecision)
+        and decision.reason is GroupReplyReason.AI_ALLOW
+    )
 
 
 _AGENT_TOOL_GUIDANCE = """\
@@ -1818,7 +1844,15 @@ class YeBot(Star):
         result = event.get_result()
         if result is None or not result.chain:
             return
-        self._queue_automatic_sticker(event, _plain_result_text(result))
+        response_text = _plain_result_text(result)
+        if _should_suppress_contextless_group_reply(event, response_text):
+            logger.info(
+                "YeBot suppressed contextless group clarification message=%s",
+                _request_id(event),
+            )
+            result.chain = []
+            return
+        self._queue_automatic_sticker(event, response_text)
         mode = self._event_response_mode(event)
         if mode is None:
             return

@@ -29,3 +29,12 @@ def build_sticker_consider_arguments(
     if tags is not None:
         arguments["tags"] = tags
     return arguments
+
+
+def reserve_automatic_sticker_search(state: dict[str, bool]) -> bool:
+    """Allow exactly one library search in one automatic sticker run."""
+
+    if state.get("searched", False):
+        return False
+    state["searched"] = True
+    return True

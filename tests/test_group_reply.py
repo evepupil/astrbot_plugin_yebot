@@ -1,0 +1,65 @@
+from yebot.runtime.group_reply import (
+    GroupReplyReason,
+    build_group_reply_judgement_prompt,
+    initial_group_reply_decision,
+    judgement_decision,
+    parse_group_reply_judgement,
+)
+
+
+def test_direct_address_and_reply_to_bot_bypass_ai_judgement() -> None:
+    direct = initial_group_reply_decision(
+        directly_addressed=True,
+        reply_to_bot=False,
+        current_text="hello",
+    )
+    replied = initial_group_reply_decision(
+        directly_addressed=False,
+        reply_to_bot=True,
+        current_text="continue",
+    )
+
+    assert direct.should_call_llm
+    assert direct.reason is GroupReplyReason.DIRECT_ADDRESS
+    assert replied.should_call_llm
+    assert replied.reason is GroupReplyReason.REPLY_TO_BOT
+
+
+def test_empty_group_content_is_rejected_without_a_model_call() -> None:
+    decision = initial_group_reply_decision(
+        directly_addressed=False,
+        reply_to_bot=False,
+        current_text="   ... ",
+    )
+
+    assert not decision.should_call_llm
+    assert decision.reason is GroupReplyReason.EMPTY_CONTENT
+    assert not decision.needs_ai_judgement
+
+
+def test_unaddressed_meaningful_content_uses_ai_judgement() -> None:
+    decision = initial_group_reply_decision(
+        directly_addressed=False,
+        reply_to_bot=False,
+        current_text="this weekend should we go to the cinema",
+    )
+
+    assert not decision.should_call_llm
+    assert decision.needs_ai_judgement
+    assert decision.reason is GroupReplyReason.NEEDS_JUDGEMENT
+
+
+def test_judgement_parser_fails_closed_and_accepts_embedded_json() -> None:
+    assert parse_group_reply_judgement('{"should_reply": true}') is True
+    assert parse_group_reply_judgement('result: {"should_reply": false}') is False
+    assert parse_group_reply_judgement("I am unsure") is None
+    assert not judgement_decision(None).should_call_llm
+
+
+def test_judgement_prompt_contains_both_context_parts() -> None:
+    prompt = build_group_reply_judgement_prompt("current", "quoted", "recent")
+
+    assert "current" in prompt
+    assert "quoted" in prompt
+    assert "recent" in prompt
+    assert '"should_reply"' in prompt

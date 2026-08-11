@@ -157,7 +157,7 @@
   "sticker_send_probability": {
     "type": "float",
     "title": "Automatic sticker probability",
-    "description": "Probability of considering an automatic sticker reaction after other gates pass.",
+    "description": "Deprecated and ignored. The AI decides after each completed main reply.",
     "default": 0.05,
     "minimum": 0,
     "maximum": 1
@@ -165,7 +165,7 @@
   "sticker_send_cooldown_seconds": {
     "type": "int",
     "title": "Automatic sticker cooldown",
-    "description": "Minimum interval between successful automatic sticker reactions in one group. Set to 0 to disable.",
+    "description": "Deprecated and ignored. Automatic sticker reactions have no cooldown.",
     "default": 0,
     "minimum": 0,
     "maximum": 86400
@@ -173,7 +173,7 @@
   "sticker_send_daily_limit": {
     "type": "int",
     "title": "Automatic sticker daily limit",
-    "description": "Maximum successful automatic sticker reactions per group per day.",
+    "description": "Deprecated and ignored. Automatic sticker reactions have no daily limit.",
     "default": 5,
     "minimum": 0,
     "maximum": 100
@@ -181,7 +181,7 @@
   "sticker_send_quiet_hours_start": {
     "type": "int",
     "title": "Automatic sticker quiet start",
-    "description": "Local hour at which automatic sticker reactions enter quiet hours.",
+    "description": "Deprecated and ignored. Automatic sticker reactions have no quiet hours.",
     "default": 0,
     "minimum": 0,
     "maximum": 23
@@ -189,7 +189,7 @@
   "sticker_send_quiet_hours_end": {
     "type": "int",
     "title": "Automatic sticker quiet end",
-    "description": "Local hour at which automatic sticker quiet hours end.",
+    "description": "Deprecated and ignored. Automatic sticker reactions have no quiet hours.",
     "default": 7,
     "minimum": 0,
     "maximum": 23
@@ -197,7 +197,7 @@
   "cooldown_seconds": {
     "type": "int",
     "title": "回复冷却秒数",
-    "description": "同一群的最短回复间隔。",
+    "description": "已弃用并忽略。群聊回复由上下文判断，不使用冷却时间。",
     "default": 60,
     "minimum": 0,
     "maximum": 86400
@@ -205,7 +205,7 @@
   "quiet_hours_start": {
     "type": "int",
     "title": "静默开始小时",
-    "description": "按本地时间计算，取值 0 到 23。",
+    "description": "已弃用并忽略。群聊回复不使用静默时段。",
     "default": 0,
     "minimum": 0,
     "maximum": 23
@@ -213,7 +213,7 @@
   "quiet_hours_end": {
     "type": "int",
     "title": "静默结束小时",
-    "description": "按本地时间计算，取值 0 到 23；与开始相同表示不启用跨午夜静默。",
+    "description": "已弃用并忽略。群聊回复不使用静默时段。",
     "default": 7,
     "minimum": 0,
     "maximum": 23
@@ -221,7 +221,7 @@
   "daily_reply_limit": {
     "type": "int",
     "title": "每日回复上限",
-    "description": "每个群每天最多自动回复次数。",
+    "description": "已弃用并忽略。群聊回复不使用每日数量上限。",
     "default": 20,
     "minimum": 0,
     "maximum": 10000
@@ -229,7 +229,7 @@
   "reply_probability": {
     "type": "float",
     "title": "回复概率",
-    "description": "通过前置规则后实际回复的概率，范围 0 到 1。",
+    "description": "已弃用并忽略。群聊回复由上下文和 AI 判断。",
     "default": 0.2,
     "minimum": 0,
     "maximum": 1
@@ -237,7 +237,7 @@
   "require_mention": {
     "type": "bool",
     "title": "要求 @机器人",
-    "description": "开启后只有明确 @ 机器人的群消息才进入回复候选。",
+    "description": "已弃用并忽略。明确 @、回复机器人和上下文判断共同决定是否回复。",
     "default": true
   },
   "bot_qq_id": {

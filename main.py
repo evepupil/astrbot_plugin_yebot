@@ -6,11 +6,11 @@ import asyncio
 import inspect
 import json
 import os
+import random
 from collections.abc import Coroutine, Mapping
 from contextlib import suppress
 from contextvars import ContextVar
 from dataclasses import replace
-from datetime import datetime
 from typing import Any
 
 from astrbot.api import logger
@@ -27,7 +27,6 @@ try:
         normalize_id_list,
         parse_identity,
     )
-    from .yebot.domain.policy import LowFrequencyPolicy, PolicyConfig
     from .yebot.runtime.addressing import is_reply_prefixed_wake
     from .yebot.runtime.agents import (
         AgentBudget,
@@ -42,6 +41,13 @@ try:
         SubAgentRequest,
         SubAgentResult,
         TaskStep,
+    )
+    from .yebot.runtime.group_reply import (
+        GroupReplyDecision,
+        build_group_reply_judgement_prompt,
+        initial_group_reply_decision,
+        judgement_decision,
+        parse_group_reply_judgement,
     )
     from .yebot.runtime.guardrails import GuardrailManager, GuardrailSettings
     from .yebot.runtime.image_generation import (
@@ -77,6 +83,8 @@ try:
     from .yebot.runtime.replies import (
         encode_onebot_message,
         extract_reply_references,
+        reply_references_user,
+        resolve_recent_group_context,
         resolve_reply_context,
     )
     from .yebot.runtime.response_media import (
@@ -84,6 +92,8 @@ try:
         ResponseModeStore,
         build_response_media_guidance,
         parse_response_mode_intent,
+        read_tts_trigger_probability,
+        select_response_mode,
     )
     from .yebot.runtime.stickers import (
         STICKER_IMAGE_REFS_EXTRA,
@@ -97,6 +107,7 @@ try:
         enrich_history_image_source,
         extract_history_image_sources,
         extract_image_components,
+        reserve_automatic_sticker_search,
     )
     from .yebot.runtime.system_info import SystemInfoCollector, TokenUsageTracker
     from .yebot.runtime.targeting import (
@@ -129,7 +140,6 @@ except ImportError:
         normalize_id_list,
         parse_identity,
     )
-    from yebot.domain.policy import LowFrequencyPolicy, PolicyConfig
     from yebot.runtime.addressing import is_reply_prefixed_wake
     from yebot.runtime.agents import (
         AgentBudget,
@@ -144,6 +154,13 @@ except ImportError:
         SubAgentRequest,
         SubAgentResult,
         TaskStep,
+    )
+    from yebot.runtime.group_reply import (
+        GroupReplyDecision,
+        build_group_reply_judgement_prompt,
+        initial_group_reply_decision,
+        judgement_decision,
+        parse_group_reply_judgement,
     )
     from yebot.runtime.guardrails import GuardrailManager, GuardrailSettings
     from yebot.runtime.image_generation import (
@@ -179,6 +196,8 @@ except ImportError:
     from yebot.runtime.replies import (
         encode_onebot_message,
         extract_reply_references,
+        reply_references_user,
+        resolve_recent_group_context,
         resolve_reply_context,
     )
     from yebot.runtime.response_media import (
@@ -186,6 +205,8 @@ except ImportError:
         ResponseModeStore,
         build_response_media_guidance,
         parse_response_mode_intent,
+        read_tts_trigger_probability,
+        select_response_mode,
     )
     from yebot.runtime.stickers import (
         STICKER_IMAGE_REFS_EXTRA,
@@ -199,6 +220,7 @@ except ImportError:
         enrich_history_image_source,
         extract_history_image_sources,
         extract_image_components,
+        reserve_automatic_sticker_search,
     )
     from yebot.runtime.system_info import SystemInfoCollector, TokenUsageTracker
     from yebot.runtime.targeting import (
@@ -315,6 +337,21 @@ def _current_message_text(event: AstrMessageEvent) -> str:
     return str(message_str).strip()[:4000]
 
 
+def _plain_result_text(result: object) -> str:
+    """Extract the model's plain text before response-media conversion."""
+
+    chain = getattr(result, "chain", ())
+    try:
+        components = tuple(chain)
+    except TypeError:
+        return ""
+    return "\n".join(
+        component.text.strip()
+        for component in components
+        if isinstance(component, Plain) and component.text.strip()
+    ).strip()[:4000]
+
+
 def _event_is_addressed(event: AstrMessageEvent) -> bool:
     """Treat AstrBot's bot mention or wake-prefix state as direct addressing."""
 
@@ -388,6 +425,16 @@ _DEFAULT_MUTE_DURATION_SECONDS = 60
 _RECALL_CANDIDATE_IDS_EXTRA = "yebot.recall.candidate_ids"
 _BACKGROUND_TOOL_CONTEXT_EXTRA = "yebot.background_tool_context"
 _POKE_EVENT_EXTRA = "yebot.poke_event"
+_GROUP_REPLY_DECISION_EXTRA = "yebot.group_reply_decision"
+_REPLY_TO_BOT_EXTRA = "yebot.reply_to_bot"
+_AUTO_STICKER_QUEUED_EXTRA = "yebot.auto_sticker_queued"
+_GROUP_REPLY_GUIDANCE = """\
+For group messages, answer only when the current context contains a concrete
+conversation with YeBot. Do not manufacture a response to overheard chatter.
+If the context has no useful thing to answer, return an empty completion instead
+of a filler question or explanation. A clear question directly addressed to the
+bot remains valid, including a question about a named subject.
+"""
 
 
 def _set_background_tool_mode(event: object, mode: str, enabled: bool) -> None:
@@ -671,34 +718,6 @@ class YeBot(Star):
         self._subagent_allowed_tools = _as_id_list(
             values.get("subagent_allowed_tools", ["group.get_members"])
         )
-        self._policy = LowFrequencyPolicy(
-            PolicyConfig(
-                observe_only=self._observe_only,
-                cooldown_seconds=_as_int(values.get("cooldown_seconds"), 60),
-                quiet_hours_start=_as_int(values.get("quiet_hours_start"), 0),
-                quiet_hours_end=_as_int(values.get("quiet_hours_end"), 7),
-                daily_reply_limit=_as_int(values.get("daily_reply_limit"), 20),
-                reply_probability=_as_float(values.get("reply_probability"), 0.2),
-                require_mention=_as_bool(values.get("require_mention"), True),
-            )
-        )
-        self._sticker_send_policy = LowFrequencyPolicy(
-            PolicyConfig(
-                observe_only=self._observe_only,
-                cooldown_seconds=_as_int(
-                    values.get("sticker_send_cooldown_seconds"), 0
-                ),
-                quiet_hours_start=_as_int(
-                    values.get("sticker_send_quiet_hours_start"), 0
-                ),
-                quiet_hours_end=_as_int(values.get("sticker_send_quiet_hours_end"), 7),
-                daily_reply_limit=_as_int(values.get("sticker_send_daily_limit"), 5),
-                reply_probability=_as_float(
-                    values.get("sticker_send_probability"), 0.05
-                ),
-                require_mention=False,
-            )
-        )
         self._image_generation_enabled = _as_bool(
             values.get("image_generation_enabled"), True
         )
@@ -876,19 +895,162 @@ class YeBot(Star):
         get_extra = getattr(event, "get_extra", None)
         cached = get_extra("yebot.reply_context", None) if callable(get_extra) else None
         if isinstance(cached, str):
+            cached_target = (
+                get_extra(_REPLY_TO_BOT_EXTRA, None) if callable(get_extra) else None
+            )
+            if cached_target is None:
+                action_client = resolve_event_action_client(
+                    event,
+                    read_cache=self._onebot_read_cache,
+                )
+                bot_id = event.get_self_id().strip() or self._bot_id
+                set_extra = getattr(event, "set_extra", None)
+                if callable(set_extra):
+                    set_extra(
+                        _REPLY_TO_BOT_EXTRA,
+                        await reply_references_user(event, action_client, bot_id),
+                    )
             return cached
+        action_client = resolve_event_action_client(
+            event,
+            read_cache=self._onebot_read_cache,
+        )
         context = await resolve_reply_context(
             event,
-            resolve_event_action_client(event, read_cache=self._onebot_read_cache),
+            action_client,
         )
+        bot_id = event.get_self_id().strip() or self._bot_id
+        reply_to_bot = await reply_references_user(event, action_client, bot_id)
         set_extra = getattr(event, "set_extra", None)
         if callable(set_extra):
             set_extra("yebot.reply_context", context)
+            set_extra(_REPLY_TO_BOT_EXTRA, reply_to_bot)
         if context:
             logger.debug(
                 "YeBot resolved reply context for message=%s", _request_id(event)
             )
         return context
+
+    async def _ensure_group_reply_decision(
+        self,
+        event: AstrMessageEvent,
+    ) -> GroupReplyDecision | None:
+        """Decide whether an ordinary group message should enter the LLM."""
+
+        if self._observe_only or _BACKGROUND_TOOL_MODE.get():
+            return None
+        raw_event = getattr(getattr(event, "message_obj", None), "raw_message", None)
+        if (
+            not isinstance(raw_event, Mapping)
+            or raw_event.get("message_type") != "group"
+        ):
+            return None
+        get_extra = getattr(event, "get_extra", None)
+        cached = (
+            get_extra(_GROUP_REPLY_DECISION_EXTRA, None)
+            if callable(get_extra)
+            else None
+        )
+        if isinstance(cached, GroupReplyDecision):
+            return cached
+
+        reply_context = await self._ensure_reply_context(event)
+        action_client = resolve_event_action_client(
+            event,
+            read_cache=self._onebot_read_cache,
+        )
+        recent_context = await resolve_recent_group_context(
+            event,
+            action_client,
+            event.get_self_id().strip() or self._bot_id,
+        )
+        reply_to_bot = bool(
+            get_extra(_REPLY_TO_BOT_EXTRA, False) if callable(get_extra) else False
+        )
+        directly_addressed = _event_is_addressed(event) or is_bot_mentioned(
+            raw_event,
+            event.get_self_id() or self._bot_id,
+        )
+        initial = initial_group_reply_decision(
+            directly_addressed=directly_addressed,
+            reply_to_bot=reply_to_bot,
+            current_text=_current_message_text(event),
+            has_non_text_content=bool(extract_image_components(event)),
+        )
+        decision = initial
+        if initial.needs_ai_judgement:
+            decision = await self._judge_group_reply_context(
+                event,
+                _current_message_text(event),
+                reply_context,
+                recent_context,
+            )
+        set_extra = getattr(event, "set_extra", None)
+        if callable(set_extra):
+            set_extra(_GROUP_REPLY_DECISION_EXTRA, decision)
+        logger.debug(
+            "YeBot group reply gate group=%s message=%s decision=%s",
+            raw_event.get("group_id", ""),
+            _request_id(event),
+            decision.reason,
+        )
+        return decision
+
+    async def _judge_group_reply_context(
+        self,
+        event: AstrMessageEvent,
+        current_text: str,
+        reply_context: str,
+        recent_context: str,
+    ) -> GroupReplyDecision:
+        """Ask the active provider whether unaddressed chatter involves YeBot."""
+
+        try:
+            provider_id = await self.context.get_current_chat_provider_id(
+                event.unified_msg_origin
+            )
+            provider = (
+                self.context.get_provider_by_id(provider_id)
+                if isinstance(provider_id, str) and provider_id.strip()
+                else None
+            )
+            text_chat = getattr(provider, "text_chat", None)
+            if not callable(text_chat):
+                return judgement_decision(None)
+            response = text_chat(
+                prompt=build_group_reply_judgement_prompt(
+                    current_text,
+                    reply_context,
+                    recent_context,
+                )
+            )
+            if inspect.isawaitable(response):
+                response = await asyncio.wait_for(
+                    response,
+                    timeout=max(1.0, self._agent_budget.timeout_seconds),
+                )
+            completion = str(getattr(response, "completion_text", ""))
+            return judgement_decision(parse_group_reply_judgement(completion))
+        except Exception as error:
+            logger.debug(
+                "YeBot group reply judgement failed error=%s",
+                type(error).__name__,
+            )
+            return judgement_decision(None)
+
+    @staticmethod
+    def _set_group_llm_gate(
+        event: AstrMessageEvent,
+        should_call_llm: bool,
+    ) -> None:
+        """Apply the gate without stopping unrelated event handlers."""
+
+        setter = getattr(event, "should_call_llm", None)
+        if callable(setter):
+            setter(should_call_llm)
+        if should_call_llm:
+            event.is_wake = True
+            event.is_at_or_wake_command = True
 
     async def confirm_tool(
         self,
@@ -1022,6 +1184,35 @@ class YeBot(Star):
         task = asyncio.create_task(coroutine)
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
+
+    def _queue_automatic_sticker(
+        self,
+        event: AstrMessageEvent,
+        response_text: str,
+    ) -> None:
+        """Start one sticker decision after a real main-agent response exists."""
+
+        if (
+            not self._sticker_auto_send
+            or self._observe_only
+            or not response_text.strip()
+            or _BACKGROUND_TOOL_MODE.get()
+            or _event_allows_background_tools(event)
+        ):
+            return
+        raw_event = getattr(getattr(event, "message_obj", None), "raw_message", None)
+        if (
+            not isinstance(raw_event, Mapping)
+            or raw_event.get("message_type") != "group"
+        ):
+            return
+        get_extra = getattr(event, "get_extra", None)
+        if callable(get_extra) and get_extra(_AUTO_STICKER_QUEUED_EXTRA, False):
+            return
+        set_extra = getattr(event, "set_extra", None)
+        if callable(set_extra):
+            set_extra(_AUTO_STICKER_QUEUED_EXTRA, True)
+        self._track_background(self._auto_send_sticker(event, response_text))
 
     async def _migrate_native_stickers(self, event: AstrMessageEvent) -> None:
         """Best-effort one-time migration of local stickers to NapCat."""
@@ -1412,39 +1603,40 @@ class YeBot(Star):
             ensure_ascii=False,
         )
 
-    async def _auto_send_sticker(self, event: AstrMessageEvent) -> None:
+    async def _auto_send_sticker(
+        self,
+        event: AstrMessageEvent,
+        response_text: str,
+    ) -> None:
         async with self._sticker_send_semaphore:
             await self._ensure_reply_context(event)
             raw_event = getattr(event.message_obj, "raw_message", None)
             if not isinstance(raw_event, Mapping):
                 return
             identity = parse_identity(raw_event, self._owner_ids)
-            send_decision = self._sticker_send_policy.evaluate(
-                identity,
-                datetime.now().astimezone(),
-                mentioned=is_bot_mentioned(
-                    raw_event, event.get_self_id() or self._bot_id
-                ),
-            )
-            logger.debug(
-                "YeBot sticker send policy group=%s decision=%s",
-                identity.group_id,
-                send_decision.code,
-            )
-            if not send_decision.should_reply:
-                return
             async with self._sticker_agent_semaphore:
                 message_hint = _message_text(event)
                 _, state = await self._run_restricted_sticker_agent(
                     event,
                     prompt=(
-                        "Read the current group conversation and decide whether a "
-                        "saved sticker would add a genuinely funny or useful reaction. "
-                        "If so, search the current group's sticker library by meaning, "
-                        "then send at most one suitable result. If no sticker fits, "
-                        "do nothing. "
-                        "Do not send text and do not invent sticker IDs.\n"
-                        f"Current message text: {message_hint or '[no text]'}"
+                        "The main YeBot agent has just produced a reply. Decide "
+                        "whether one saved sticker would add a genuinely useful or "
+                        "funny reaction "
+                        "to this exchange. Read the current group context and the main "
+                        "reply first. If the group is not actually talking with YeBot, "
+                        "or the exchange has no concrete conversational value, do "
+                        "nothing. Do not react to contextless questions such as what "
+                        "the group is "
+                        "talking about, what an undefined X is, or what X means.\n"
+                        "If a reaction is worthwhile, call yebot_sticker_search "
+                        "exactly once with a concise meaning query. Inspect the "
+                        "returned candidates and call yebot_sticker_send only when one "
+                        "is a strong match. Send at most one sticker. If no candidate "
+                        "fits, do nothing. Never send "
+                        "text and never invent sticker IDs.\n"
+                        "Current group message and reply context:\n"
+                        f"{message_hint or '[no text]'}\n"
+                        f"Main YeBot reply:\n{response_text.strip()[:4000]}"
                     ),
                     allowed_tools=("yebot_sticker_search", "yebot_sticker_send"),
                     mode="sticker_send",
@@ -1521,6 +1713,14 @@ class YeBot(Star):
         if reply_context and reply_context not in request.prompt:
             request.prompt = f"{request.prompt.rstrip()}\n\n{reply_context}"
         current_message_text = _current_message_text(event)
+        group_reply_decision = await self._ensure_group_reply_decision(event)
+        if group_reply_decision is not None:
+            self._set_group_llm_gate(
+                event,
+                group_reply_decision.should_call_llm,
+            )
+            if not group_reply_decision.should_call_llm:
+                return
         response_mode = self._prepare_response_mode(event, current_message_text)
         if await self._prehandle_owner_reminder(event, current_message_text):
             return
@@ -1532,6 +1732,8 @@ class YeBot(Star):
         message_text = _message_text(event)
         system_prompt = request.system_prompt.rstrip()
         additions: list[str] = []
+        if group_reply_decision is not None:
+            additions.append(_GROUP_REPLY_GUIDANCE)
         response_media_guidance = build_response_media_guidance(response_mode)
         if response_media_guidance:
             additions.append(response_media_guidance)
@@ -1579,15 +1781,20 @@ class YeBot(Star):
         intent = parse_response_mode_intent(message_text)
         if intent.clear_preference:
             self._response_mode_store.clear(identity.user_id)
-            mode = self._response_mode_default
+            stored_mode = None
         elif intent.mode is not None:
-            mode = intent.mode
+            stored_mode = None
             if intent.persist:
-                self._response_mode_store.set(identity.user_id, mode)
+                self._response_mode_store.set(identity.user_id, intent.mode)
         else:
-            mode = self._response_mode_store.get(identity.user_id)
-            if mode is None:
-                mode = self._response_mode_default
+            stored_mode = self._response_mode_store.get(identity.user_id)
+        mode = select_response_mode(
+            explicit=intent.mode,
+            stored=stored_mode,
+            default=self._response_mode_default,
+            tts_probability=read_tts_trigger_probability(self.context.get_config()),
+            random_value=random.random(),
+        )
         logger.info(
             "YeBot response media selected mode=%s explicit=%s persistent=%s",
             mode.value,
@@ -1606,11 +1813,12 @@ class YeBot(Star):
     ) -> None:
         """Render model text as deterministic text, voice, or both before send."""
 
-        mode = self._event_response_mode(event)
-        if mode is None:
-            return
         result = event.get_result()
         if result is None or not result.chain:
+            return
+        self._queue_automatic_sticker(event, _plain_result_text(result))
+        mode = self._event_response_mode(event)
+        if mode is None:
             return
         self._disable_automatic_response_transforms(result)
         if mode is ResponseMode.TEXT:
@@ -2453,6 +2661,15 @@ class YeBot(Star):
             limit(number): 最多返回的候选数量。
         """
 
+        state = _AUTO_STICKER_SEND_STATE.get()
+        if state is not None and not reserve_automatic_sticker_search(state):
+            return json.dumps(
+                {
+                    "status": "failed",
+                    "summary": "automatic sticker search limit reached",
+                },
+                ensure_ascii=False,
+            )
         bounded_limit: object = limit
         if isinstance(limit, float) and limit.is_integer():
             bounded_limit = int(limit)
@@ -2530,12 +2747,6 @@ class YeBot(Star):
             tool_value = getattr(value, "value", None)
             if isinstance(tool_value, Mapping) and tool_value.get("sent") is True:
                 state["sent"] = True
-                raw_event = getattr(event.message_obj, "raw_message", None)
-                if isinstance(raw_event, Mapping):
-                    identity = parse_identity(raw_event, self._owner_ids)
-                    self._sticker_send_policy.commit(
-                        identity, datetime.now().astimezone()
-                    )
         return self._encode_run(result)
 
     @filter.llm_tool(name="yebot_confirm_action")
@@ -3054,7 +3265,7 @@ class YeBot(Star):
     @filter.platform_adapter_type(filter.PlatformAdapterType.AIOCQHTTP)
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
     async def observe_group(self, event: AstrMessageEvent) -> None:
-        """Analyze a group message and emit a redacted debug record only."""
+        """Gate ordinary group replies and schedule safe sticker collection."""
 
         raw_event = getattr(event.message_obj, "raw_message", None)
         if not isinstance(raw_event, Mapping):
@@ -3071,30 +3282,31 @@ class YeBot(Star):
             raw_event,
             owner_ids=self._owner_ids,
             bot_id=event_bot_id or self._bot_id,
-            policy=self._policy,
-            now=datetime.now().astimezone(),
         )
         if observation is None:
             return
         logger.debug(
-            "YeBot observed group=%s user=%s role=%s mentioned=%s decision=%s",
+            "YeBot observed group=%s user=%s role=%s mentioned=%s",
             observation.identity.group_id,
             observation.identity.user_id,
             observation.identity.role,
             observation.mentioned,
-            observation.decision.code,
         )
         if self._observe_only:
             return
+
+        group_reply_decision = await self._ensure_group_reply_decision(event)
+        if group_reply_decision is not None:
+            self._set_group_llm_gate(
+                event,
+                group_reply_decision.should_call_llm,
+            )
 
         if not self._sticker_native_migration_done and not self._tool_dry_run:
             self._track_background(self._migrate_native_stickers(event))
 
         if self._sticker_auto_collect and extract_image_components(event):
             self._track_background(self._auto_collect_sticker(event))
-
-        if self._sticker_auto_send:
-            self._track_background(self._auto_send_sticker(event))
 
     @filter.platform_adapter_type(filter.PlatformAdapterType.AIOCQHTTP)
     @filter.event_message_type(filter.EventMessageType.PRIVATE_MESSAGE)

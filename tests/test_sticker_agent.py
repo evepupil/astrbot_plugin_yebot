@@ -1,4 +1,14 @@
-from yebot.runtime.stickers import build_sticker_consider_arguments
+from yebot.runtime.stickers import (
+    build_sticker_consider_arguments,
+    reserve_automatic_sticker_search,
+)
+
+
+def test_automatic_sticker_run_searches_at_most_once() -> None:
+    state: dict[str, bool] = {}
+
+    assert reserve_automatic_sticker_search(state)
+    assert not reserve_automatic_sticker_search(state)
 
 
 def test_sticker_consider_defaults_fail_closed() -> None:

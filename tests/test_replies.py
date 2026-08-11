@@ -4,6 +4,8 @@ from types import SimpleNamespace
 from yebot.runtime.replies import (
     encode_onebot_message,
     extract_reply_references,
+    reply_references_user,
+    resolve_recent_group_context,
     resolve_reply_context,
 )
 
@@ -33,6 +35,51 @@ class FakeActionClient:
     async def call_action(self, action: str, **params: object) -> object:
         self.calls.append((action, params))
         return self.response
+
+
+def test_reply_reference_can_identify_the_bot_sender() -> None:
+    event = ReplyEvent(
+        ReplyComponent(12),
+        raw_message={"message": [{"type": "reply", "data": {"id": "12"}}]},
+    )
+    client = FakeActionClient({"data": {"sender": {"user_id": 123}, "message": []}})
+
+    assert asyncio.run(reply_references_user(event, client, "123"))
+
+
+def test_recent_group_context_marks_bot_messages_without_user_ids() -> None:
+    event = ReplyEvent(
+        ReplyComponent(14),
+        raw_message={
+            "message_type": "group",
+            "group_id": 100,
+            "message": [],
+        },
+    )
+    event.message_obj.message_id = 14
+    client = FakeActionClient(
+        {
+            "data": {
+                "messages": [
+                    {
+                        "message_id": 13,
+                        "sender": {"user_id": 123},
+                        "message": [{"type": "text", "data": {"text": "bot reply"}}],
+                    },
+                    {
+                        "message_id": 14,
+                        "sender": {"user_id": 42},
+                        "message": [{"type": "text", "data": {"text": "current"}}],
+                    },
+                ]
+            }
+        }
+    )
+
+    context = asyncio.run(resolve_recent_group_context(event, client, "123"))
+
+    assert "[YeBot] bot reply" in context
+    assert "current" not in context
 
 
 def test_reply_context_uses_attached_astrbot_text_without_action() -> None:

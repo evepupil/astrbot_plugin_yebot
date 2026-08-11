@@ -34,7 +34,10 @@ _CLARIFICATION_MARKERS = (
     "你想表达什么",
     "能说清楚吗",
     "具体说说",
+    "详细说说",
     "说清楚点",
+    "解释一下",
+    "解释下",
     "没听懂",
     "听不懂",
     "没明白",
@@ -52,6 +55,14 @@ _CLARIFICATION_MARKERS = (
     "怎么了",
     "咋了",
 )
+_CONFUSION_PREFIXES = (
+    "我没听懂",
+    "我听不懂",
+    "我没明白",
+    "我不明白",
+    "我不懂",
+)
+_CLARIFICATION_CONNECTORS = ("能不能", "能否", "你能", "请", "可以")
 _ANSWERING_MARKERS = (
     "解释",
     "意思是",
@@ -96,6 +107,20 @@ def is_contextless_clarification(text: str) -> bool:
         return False
     if _DEFINITION_QUESTION.fullmatch(normalized):
         return True
+
+    for prefix in _CONFUSION_PREFIXES:
+        if not normalized.startswith(prefix):
+            continue
+        remainder = normalized[len(prefix) :]
+        for connector in _CLARIFICATION_CONNECTORS:
+            if remainder.startswith(connector):
+                remainder = remainder[len(connector) :]
+                break
+        if not remainder:
+            return True
+        for marker in sorted(_CLARIFICATION_MARKERS, key=len, reverse=True):
+            remainder = remainder.replace(marker, "")
+        return not remainder
 
     for marker in sorted(_CLARIFICATION_MARKERS, key=len, reverse=True):
         if normalized.startswith(marker):

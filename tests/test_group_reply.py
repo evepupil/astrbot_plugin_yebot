@@ -19,6 +19,7 @@ def test_contextless_clarification_detection_catches_vague_replies() -> None:
     assert is_contextless_clarification("啥意思 f佬是啥")
     assert is_contextless_clarification("你在说什么鬼东西")
     assert is_contextless_clarification("啥意思 没听懂")
+    assert is_contextless_clarification("我没听懂，你能具体说说吗")
     assert is_contextless_clarification("量子纠缠是什么意思")
     assert not is_contextless_clarification("啥意思？我给你解释一下量子纠缠")
     assert not is_contextless_clarification("这个问题可以从两个方面回答")

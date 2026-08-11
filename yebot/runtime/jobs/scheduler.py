@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from datetime import UTC, datetime, timedelta
 
 from ...domain.identity import Identity, normalize_id
@@ -82,14 +82,25 @@ class JobScheduler:
         *,
         now: datetime | None = None,
         limit: int = 10,
+        blocked_group_ids: Iterable[str] = (),
     ) -> tuple[Job, ...]:
         """Run a bounded batch and converge failures into retry or failed states."""
 
         if limit < 1:
             raise ValueError("limit must be positive")
+        blocked: set[str] = set()
+        for group_id in blocked_group_ids:
+            canonical = _canonical_group_id(group_id)
+            if canonical:
+                blocked.add(canonical)
+        blocked.discard("")
         async with self._run_lock:
             current = self._now() if now is None else _utc(now)
-            due = [job for job in self._store.list() if job.is_due(current)][:limit]
+            due = [
+                job
+                for job in self._store.list()
+                if job.is_due(current) and job.group_id not in blocked
+            ][:limit]
             finished: list[Job] = []
             for job in due:
                 running = job.with_update(status=JobStatus.RUNNING)
@@ -138,6 +149,11 @@ class JobScheduler:
 
     def _now(self) -> datetime:
         return _utc(self._clock())
+
+
+def _canonical_group_id(value: object) -> str:
+    normalized = normalize_id(value)
+    return str(int(normalized)) if normalized.isdecimal() else normalized
 
 
 def _utc(value: datetime) -> datetime:

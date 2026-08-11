@@ -42,6 +42,13 @@ try:
         SubAgentResult,
         TaskStep,
     )
+    from .yebot.runtime.group_blacklist import (
+        event_group_id,
+        is_blacklisted_event,
+        is_blacklisted_group,
+        normalize_group_id,
+        normalize_group_ids,
+    )
     from .yebot.runtime.group_reply import (
         GroupReplyDecision,
         GroupReplyReason,
@@ -158,6 +165,13 @@ except ImportError:
         SubAgentRequest,
         SubAgentResult,
         TaskStep,
+    )
+    from yebot.runtime.group_blacklist import (
+        event_group_id,
+        is_blacklisted_event,
+        is_blacklisted_group,
+        normalize_group_id,
+        normalize_group_ids,
     )
     from yebot.runtime.group_reply import (
         GroupReplyDecision,
@@ -401,6 +415,13 @@ class _ReplyWakeFilter(filter.CustomFilter):
     """Match a configured wake prefix in current text after a reply segment."""
 
     def filter(self, event: AstrMessageEvent, cfg: Any) -> bool:
+        configured_ids = (
+            normalize_group_ids(cfg.get("blacklisted_group_ids", ()))
+            if isinstance(cfg, Mapping)
+            else frozenset()
+        )
+        if is_blacklisted_event(event, configured_ids):
+            return False
         if _event_is_addressed(event):
             return False
         get_messages = getattr(event, "get_messages", None)
@@ -436,6 +457,7 @@ _POKE_EVENT_EXTRA = "yebot.poke_event"
 _GROUP_REPLY_DECISION_EXTRA = "yebot.group_reply_decision"
 _REPLY_TO_BOT_EXTRA = "yebot.reply_to_bot"
 _AUTO_STICKER_QUEUED_EXTRA = "yebot.auto_sticker_queued"
+_BLACKLISTED_GROUP_EXTRA = "yebot.blacklisted_group"
 _GROUP_REPLY_GUIDANCE = """\
 For group messages, answer only when the available message and context contain
 enough concrete information for a useful response. The context does not need to
@@ -637,6 +659,14 @@ class YeBot(Star):
             len(self._owner_ids),
         )
         self._bot_id = str(values.get("bot_qq_id", "")).strip()
+        self._blacklisted_group_ids = normalize_group_ids(
+            values.get("blacklisted_group_ids")
+        )
+        if self._blacklisted_group_ids:
+            logger.info(
+                "YeBot group blacklist loaded count=%d",
+                len(self._blacklisted_group_ids),
+            )
         self._observe_only = _as_bool(values.get("observe_only"), True)
         self._tool_dry_run = _as_bool(values.get("tool_dry_run"), True)
         self._model_ratings_client = (
@@ -834,7 +864,22 @@ class YeBot(Star):
         """
 
         normalized_name = tool_name.strip().lower()
+        if self._stop_if_blacklisted_group(event):
+            return ToolResult(
+                normalized_name,
+                ToolResultCode.EXECUTION_DISABLED,
+                error="blacklisted group",
+            )
         background = await self._background_tool_context(event)
+        if background is not None and self._stop_if_blacklisted_group(
+            event,
+            group_id=background.group_id,
+        ):
+            return ToolResult(
+                normalized_name,
+                ToolResultCode.EXECUTION_DISABLED,
+                error="blacklisted group",
+            )
         raw_event = getattr(getattr(event, "message_obj", None), "raw_message", None)
         if background is None and not isinstance(raw_event, Mapping):
             return ToolResult(
@@ -925,6 +970,8 @@ class YeBot(Star):
     async def _ensure_reply_context(self, event: AstrMessageEvent) -> str:
         """Fetch a missing OneBot reply body once for this event."""
 
+        if self._is_blacklisted_group(event):
+            return ""
         get_extra = getattr(event, "get_extra", None)
         cached = get_extra("yebot.reply_context", None) if callable(get_extra) else None
         if isinstance(cached, str):
@@ -971,6 +1018,8 @@ class YeBot(Star):
         """Decide whether an ordinary group message should enter the LLM."""
 
         if self._observe_only or _BACKGROUND_TOOL_MODE.get():
+            return None
+        if self._stop_if_blacklisted_group(event):
             return None
         raw_event = getattr(getattr(event, "message_obj", None), "raw_message", None)
         if (
@@ -1094,7 +1143,22 @@ class YeBot(Star):
     ) -> ToolResult:
         """Execute a pending high-risk action for the current actor and group."""
 
+        if self._stop_if_blacklisted_group(event):
+            return ToolResult(
+                "confirmation",
+                ToolResultCode.EXECUTION_DISABLED,
+                error="blacklisted group",
+            )
         background = await self._background_tool_context(event)
+        if background is not None and self._stop_if_blacklisted_group(
+            event,
+            group_id=background.group_id,
+        ):
+            return ToolResult(
+                "confirmation",
+                ToolResultCode.EXECUTION_DISABLED,
+                error="blacklisted group",
+            )
         raw_event = getattr(getattr(event, "message_obj", None), "raw_message", None)
         if background is None and not isinstance(raw_event, Mapping):
             return ToolResult(
@@ -1210,7 +1274,10 @@ class YeBot(Star):
             )
 
         while True:
-            await self._job_scheduler.run_due(execute)
+            await self._job_scheduler.run_due(
+                execute,
+                blocked_group_ids=self._blacklisted_group_ids,
+            )
             await asyncio.sleep(1)
 
     def _track_background(self, coroutine: Coroutine[Any, Any, None]) -> None:
@@ -1231,6 +1298,7 @@ class YeBot(Star):
             or not response_text.strip()
             or _BACKGROUND_TOOL_MODE.get()
             or _event_allows_background_tools(event)
+            or self._is_blacklisted_group(event)
         ):
             return
         raw_event = getattr(getattr(event, "message_obj", None), "raw_message", None)
@@ -1250,7 +1318,11 @@ class YeBot(Star):
     async def _migrate_native_stickers(self, event: AstrMessageEvent) -> None:
         """Best-effort one-time migration of local stickers to NapCat."""
 
-        if self._tool_dry_run or self._sticker_native_migration_done:
+        if (
+            self._tool_dry_run
+            or self._sticker_native_migration_done
+            or self._is_blacklisted_group(event)
+        ):
             return
         async with self._sticker_native_migration_lock:
             if self._sticker_native_migration_done:
@@ -1520,6 +1592,8 @@ class YeBot(Star):
             return "", {}
 
     async def _auto_collect_sticker(self, event: AstrMessageEvent) -> None:
+        if self._is_blacklisted_group(event):
+            return
         async with self._sticker_agent_semaphore:
             image_urls = await self._sticker_service.image_urls(event)
             if not image_urls:
@@ -1641,6 +1715,8 @@ class YeBot(Star):
         event: AstrMessageEvent,
         response_text: str,
     ) -> None:
+        if self._is_blacklisted_group(event):
+            return
         async with self._sticker_send_semaphore:
             await self._ensure_reply_context(event)
             raw_event = getattr(event.message_obj, "raw_message", None)
@@ -1689,6 +1765,8 @@ class YeBot(Star):
     async def restore_reply_wake_addressing(self, event: AstrMessageEvent) -> None:
         """Restore wake state when a reply precedes the configured wake prefix."""
 
+        if self._stop_if_blacklisted_group(event):
+            return
         event.is_at_or_wake_command = True
         event.is_wake = True
         logger.debug(
@@ -1730,7 +1808,8 @@ class YeBot(Star):
     ) -> None:
         """Keep a process-local total of usage reported by AstrBot providers."""
 
-        del event
+        if self._is_blacklisted_group(event):
+            return
         if self._token_usage_tracker is not None:
             self._token_usage_tracker.record_response(response)
 
@@ -1742,6 +1821,8 @@ class YeBot(Star):
     ) -> None:
         """Tell the main Agent how to choose YeBot tools from user intent."""
 
+        if self._stop_if_blacklisted_group(event):
+            return
         reply_context = await self._ensure_reply_context(event)
         if reply_context and reply_context not in request.prompt:
             request.prompt = f"{request.prompt.rstrip()}\n\n{reply_context}"
@@ -1846,6 +1927,12 @@ class YeBot(Star):
     ) -> None:
         """Render model text as deterministic text, voice, or both before send."""
 
+        if self._is_blacklisted_group(event):
+            self._stop_if_blacklisted_group(event)
+            result = event.get_result()
+            if result is not None:
+                result.chain = []
+            return
         result = event.get_result()
         if result is None or not result.chain:
             return
@@ -2061,6 +2148,51 @@ class YeBot(Star):
         else:
             text = f"提醒没有创建：{result.error or result.code.value}"
         await event.send(MessageChain([Plain(text)]))
+
+    def _is_blacklisted_group(
+        self,
+        event: AstrMessageEvent,
+        *,
+        group_id: object = "",
+    ) -> bool:
+        """Check an event or explicit background group against the blacklist."""
+
+        normalized = normalize_group_id(group_id) or event_group_id(event)
+        return is_blacklisted_group(normalized, self._blacklisted_group_ids)
+
+    def _stop_if_blacklisted_group(
+        self,
+        event: AstrMessageEvent,
+        *,
+        group_id: object = "",
+    ) -> bool:
+        """Stop all YeBot processing for one configured group."""
+
+        if not self._is_blacklisted_group(event, group_id=group_id):
+            return False
+        get_extra = getattr(event, "get_extra", None)
+        already_stopped = (
+            bool(get_extra(_BLACKLISTED_GROUP_EXTRA, False))
+            if callable(get_extra)
+            else False
+        )
+        if already_stopped:
+            return True
+        set_extra = getattr(event, "set_extra", None)
+        if callable(set_extra):
+            set_extra(_BLACKLISTED_GROUP_EXTRA, True)
+        should_call_llm = getattr(event, "should_call_llm", None)
+        if callable(should_call_llm):
+            should_call_llm(False)
+        stop_event = getattr(event, "stop_event", None)
+        if callable(stop_event):
+            stop_event()
+        logger.debug(
+            "YeBot skipped blacklisted group=%s message=%s",
+            normalize_group_id(group_id) or event_group_id(event),
+            _request_id(event),
+        )
+        return True
 
     @staticmethod
     def _stop_direct_event(event: AstrMessageEvent) -> None:
@@ -3254,6 +3386,8 @@ class YeBot(Star):
         self,
         event: AstrMessageEvent,
     ) -> None:
+        if self._stop_if_blacklisted_group(event):
+            return
         raw_event = getattr(event.message_obj, "raw_message", None)
         if not isinstance(raw_event, Mapping):
             return
@@ -3308,6 +3442,8 @@ class YeBot(Star):
     async def observe_group(self, event: AstrMessageEvent) -> None:
         """Gate ordinary group replies and schedule safe sticker collection."""
 
+        if self._stop_if_blacklisted_group(event):
+            return
         raw_event = getattr(event.message_obj, "raw_message", None)
         if not isinstance(raw_event, Mapping):
             return

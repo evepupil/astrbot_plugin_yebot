@@ -246,6 +246,15 @@
     "description": "可选备用值；优先使用 AstrBot 事件自带的机器人 QQ 号，留空即可自动识别。",
     "default": ""
   },
+  "blacklisted_group_ids": {
+    "type": "list",
+    "title": "Blacklisted group IDs",
+    "description": "Groups in this list are completely skipped by YeBot, including LLM calls, tools, image generation, sticker collection, reactions, and reminders.",
+    "items": {
+      "type": "string"
+    },
+    "default": []
+  },
   "agent_max_steps": {
     "type": "int",
     "title": "Agent 最大步骤数",

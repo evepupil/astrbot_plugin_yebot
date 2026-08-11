@@ -102,6 +102,30 @@ def test_due_job_retries_with_backoff_then_completes() -> None:
     assert calls[0] == 2
 
 
+def test_blocked_group_job_stays_pending_without_execution() -> None:
+    now = [datetime(2026, 1, 1, tzinfo=UTC)]
+    store = MemoryJobStore()
+    scheduler = JobScheduler(store, clock=lambda: now[0])
+    job = scheduler.create_reminder(identity(), delay_seconds=1, message="blocked")
+    now[0] = job.run_at
+    calls = [0]
+
+    async def executor(_job: object) -> None:
+        calls[0] += 1
+
+    result = asyncio.run(
+        scheduler.run_due(
+            executor,
+            now=now[0],
+            blocked_group_ids=("00100",),
+        )
+    )
+
+    assert result == ()
+    assert store.get(job.job_id) == job
+    assert calls[0] == 0
+
+
 def test_failed_job_stops_after_max_attempts() -> None:
     now = [datetime(2026, 1, 1, tzinfo=UTC)]
     store = MemoryJobStore()

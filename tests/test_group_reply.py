@@ -3,6 +3,7 @@ from yebot.runtime.group_reply import (
     astrbot_call_llm_flag,
     build_group_reply_judgement_prompt,
     initial_group_reply_decision,
+    is_bracketed_meta_response,
     is_contextless_clarification,
     is_no_response_placeholder,
     judgement_decision,
@@ -38,6 +39,15 @@ def test_no_response_placeholder_detection_catches_dynamic_participants() -> Non
         "没有回应，这是DON在和幽幽子机器人互动，我来解释"
     )
     assert not is_no_response_placeholder("图片已查看，我可以解释图片中的内容")
+
+
+def test_bracketed_meta_response_detection_requires_whole_response() -> None:
+    assert is_bracketed_meta_response("[本消息不需要回复]")
+    assert is_bracketed_meta_response("  [没有要回复的内容]  ")
+    assert is_bracketed_meta_response("[内部判断\n无需发送]")
+    assert not is_bracketed_meta_response("这条消息是[重点]，我来回答")
+    assert not is_bracketed_meta_response("[先说结论] 然后解释原因")
+    assert not is_bracketed_meta_response("[]")
 
 
 def test_direct_address_and_reply_to_bot_bypass_ai_judgement() -> None:

@@ -93,6 +93,10 @@ _IMAGE_NO_RESPONSE_PLACEHOLDER = re.compile(
     r")(?:暂时)?(?:没有|无)(?:需要|要|可)?回复(?:的)?内容$",
     re.UNICODE,
 )
+_BRACKETED_META_RESPONSE = re.compile(
+    r"^\s*\[[^\[\]]+\]\s*$",
+    re.DOTALL,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,6 +132,12 @@ def is_no_response_placeholder(text: str) -> bool:
             _IMAGE_NO_RESPONSE_PLACEHOLDER,
         )
     )
+
+
+def is_bracketed_meta_response(text: str) -> bool:
+    """Return whether the whole response is wrapped in square brackets."""
+
+    return _BRACKETED_META_RESPONSE.fullmatch(text) is not None
 
 
 def is_contextless_clarification(text: str) -> bool:

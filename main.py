@@ -55,6 +55,7 @@ try:
         astrbot_call_llm_flag,
         build_group_reply_judgement_prompt,
         initial_group_reply_decision,
+        is_bracketed_meta_response,
         is_contextless_clarification,
         is_no_response_placeholder,
         judgement_decision,
@@ -179,6 +180,7 @@ except ImportError:
         astrbot_call_llm_flag,
         build_group_reply_judgement_prompt,
         initial_group_reply_decision,
+        is_bracketed_meta_response,
         is_contextless_clarification,
         is_no_response_placeholder,
         judgement_decision,
@@ -1937,6 +1939,13 @@ class YeBot(Star):
         if result is None or not result.chain:
             return
         response_text = _plain_result_text(result)
+        if is_bracketed_meta_response(response_text):
+            logger.info(
+                "YeBot suppressed bracketed meta response message=%s",
+                _request_id(event),
+            )
+            result.chain = []
+            return
         if _should_suppress_contextless_group_reply(event, response_text):
             logger.info(
                 "YeBot suppressed contextless group clarification message=%s",

@@ -12,6 +12,7 @@ from contextlib import suppress
 from contextvars import ContextVar
 from dataclasses import replace
 from typing import Any
+from uuid import uuid4
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
@@ -125,7 +126,12 @@ try:
         enrich_history_image_source,
         extract_history_image_sources,
         extract_image_components,
+        is_registered_automatic_sticker_event,
+        release_automatic_sticker_run,
+        reserve_automatic_sticker_event,
+        reserve_automatic_sticker_run,
         reserve_automatic_sticker_search,
+        reserve_automatic_sticker_send_attempt,
         resolve_replied_sticker_image,
         should_queue_automatic_sticker,
     )
@@ -258,7 +264,12 @@ except ImportError:
         enrich_history_image_source,
         extract_history_image_sources,
         extract_image_components,
+        is_registered_automatic_sticker_event,
+        release_automatic_sticker_run,
+        reserve_automatic_sticker_event,
+        reserve_automatic_sticker_run,
         reserve_automatic_sticker_search,
+        reserve_automatic_sticker_send_attempt,
         resolve_replied_sticker_image,
         should_queue_automatic_sticker,
     )
@@ -478,6 +489,7 @@ _REPLY_TO_BOT_EXTRA = "yebot.reply_to_bot"
 _AUTO_STICKER_QUEUED_EXTRA = "yebot.auto_sticker_queued"
 _AUTO_STICKER_KEY_EXTRA = "yebot.auto_sticker_key"
 _AUTO_STICKER_SOURCE_EXTRA = "yebot.auto_sticker_source"
+_AUTO_STICKER_SOURCE_TOKEN_EXTRA = "yebot.auto_sticker_source_token"
 _BLACKLISTED_GROUP_EXTRA = "yebot.blacklisted_group"
 _TOOL_SENT_TEXTS_EXTRA = "yebot.tool_sent_texts"
 _GROUP_REPLY_GUIDANCE = """\
@@ -816,6 +828,8 @@ class YeBot(Star):
         )
         self._job_task: asyncio.Task[None] | None = None
         self._background_tasks: set[asyncio.Task[None]] = set()
+        self._automatic_sticker_consumed_tokens: set[str] = set()
+        self._automatic_sticker_run_state: dict[str, bool] = {}
         self._agent_budget = AgentBudget(
             max_steps=_as_int(values.get("agent_max_steps"), 6),
             max_concurrency=_as_int(values.get("agent_max_concurrency"), 1),
@@ -1076,16 +1090,25 @@ class YeBot(Star):
         ):
             return None
         source_key = automatic_sticker_key(raw_event)
-        sender = raw_event.get("sender")
-        sender_id = (
-            normalize_id(sender.get("user_id") or sender.get("qq"))
-            if isinstance(sender, Mapping)
+        bot_id = event.get_self_id().strip() or self._bot_id
+        get_extra = getattr(event, "get_extra", None)
+        set_extra = getattr(event, "set_extra", None)
+        observed_token = (
+            str(get_extra(_AUTO_STICKER_SOURCE_TOKEN_EXTRA, "")).strip()
+            if callable(get_extra)
             else ""
         )
-        bot_id = event.get_self_id().strip() or self._bot_id
-        set_extra = getattr(event, "set_extra", None)
-        if callable(set_extra) and source_key and sender_id and sender_id != bot_id:
-            set_extra(_AUTO_STICKER_SOURCE_EXTRA, source_key)
+        registered = is_registered_automatic_sticker_event(
+            raw_event,
+            observed_message_key=source_key,
+            observed_event_token=observed_token,
+            bot_id=bot_id,
+        )
+        if not registered:
+            source_key, observed_token = self._register_automatic_sticker_source(
+                event,
+                raw_event,
+            )
         get_extra = getattr(event, "get_extra", None)
         cached = (
             get_extra(_GROUP_REPLY_DECISION_EXTRA, None)
@@ -1346,6 +1369,52 @@ class YeBot(Star):
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
 
+    def _register_automatic_sticker_source(
+        self,
+        event: AstrMessageEvent,
+        raw_event: Mapping[str, object],
+    ) -> tuple[str, str]:
+        """Register one human group message as the only reaction source."""
+
+        source_key = automatic_sticker_key(raw_event)
+        sender = raw_event.get("sender")
+        sender_id = (
+            normalize_id(sender.get("user_id") or sender.get("qq"))
+            if isinstance(sender, Mapping)
+            else ""
+        )
+        bot_id = event.get_self_id().strip() or self._bot_id
+        set_extra = getattr(event, "set_extra", None)
+        get_extra = getattr(event, "get_extra", None)
+        if (
+            not callable(set_extra)
+            or not source_key
+            or str(raw_event.get("post_type", "")).strip().lower() != "message"
+            or str(raw_event.get("message_type", "")).strip().lower() != "group"
+            or not sender_id
+            or sender_id == bot_id
+        ):
+            if callable(set_extra):
+                set_extra(_AUTO_STICKER_SOURCE_EXTRA, "")
+                set_extra(_AUTO_STICKER_SOURCE_TOKEN_EXTRA, "")
+            return "", ""
+
+        previous_key = (
+            str(get_extra(_AUTO_STICKER_SOURCE_EXTRA, "")).strip()
+            if callable(get_extra)
+            else ""
+        )
+        token = (
+            str(get_extra(_AUTO_STICKER_SOURCE_TOKEN_EXTRA, "")).strip()
+            if callable(get_extra)
+            else ""
+        )
+        if previous_key != source_key or not token:
+            token = f"{source_key}:{uuid4().hex}"
+            set_extra(_AUTO_STICKER_SOURCE_EXTRA, source_key)
+            set_extra(_AUTO_STICKER_SOURCE_TOKEN_EXTRA, token)
+        return source_key, token
+
     def _queue_automatic_sticker(
         self,
         event: AstrMessageEvent,
@@ -1354,6 +1423,8 @@ class YeBot(Star):
         """Start one sticker decision after a real main-agent response exists."""
 
         raw_event = getattr(getattr(event, "message_obj", None), "raw_message", None)
+        if not isinstance(raw_event, Mapping):
+            return
         get_extra = getattr(event, "get_extra", None)
         group_decision = (
             get_extra(_GROUP_REPLY_DECISION_EXTRA, None)
@@ -1368,12 +1439,18 @@ class YeBot(Star):
             if callable(get_extra)
             else ""
         )
+        observed_event_token = (
+            str(get_extra(_AUTO_STICKER_SOURCE_TOKEN_EXTRA, "")).strip()
+            if callable(get_extra)
+            else ""
+        )
         message_key = automatic_sticker_key(raw_event)
         if not self._sticker_auto_send or not should_queue_automatic_sticker(
             raw_event,
             response_text=response_text,
             current_text=_current_message_text(event),
             observed_message_key=observed_message_key,
+            observed_event_token=observed_event_token,
             has_image=bool(extract_image_components(event)),
             group_reply_allowed=group_reply_allowed,
             observe_only=self._observe_only,
@@ -1390,11 +1467,25 @@ class YeBot(Star):
             return
         if callable(get_extra) and get_extra(_AUTO_STICKER_QUEUED_EXTRA, False):
             return
+        if not reserve_automatic_sticker_event(
+            self._automatic_sticker_consumed_tokens,
+            observed_event_token,
+        ):
+            return
+        if not reserve_automatic_sticker_run(self._automatic_sticker_run_state):
+            return
         set_extra = getattr(event, "set_extra", None)
         if callable(set_extra):
             set_extra(_AUTO_STICKER_QUEUED_EXTRA, True)
             set_extra(_AUTO_STICKER_KEY_EXTRA, message_key)
-        self._track_background(self._auto_send_sticker(event, response_text))
+        self._track_background(
+            self._auto_send_sticker(
+                event,
+                response_text,
+                source_key=message_key,
+                source_token=observed_event_token,
+            )
+        )
 
     async def _migrate_native_stickers(self, event: AstrMessageEvent) -> None:
         """Best-effort one-time migration of local stickers to NapCat."""
@@ -1682,7 +1773,11 @@ class YeBot(Star):
             )
             mode_token = _BACKGROUND_TOOL_MODE.set(mode)
             _set_background_tool_mode(event, mode, True)
-            state = {"sent": False} if mode == "sticker_send" else {"collected": False}
+            state = (
+                {"sent": False, "send_attempted": False}
+                if mode == "sticker_send"
+                else {"collected": False}
+            )
             state_token = _AUTO_STICKER_SEND_STATE.set(state)
             try:
                 response = await self.context.tool_loop_agent(
@@ -1836,50 +1931,76 @@ class YeBot(Star):
         self,
         event: AstrMessageEvent,
         response_text: str,
+        *,
+        source_key: str,
+        source_token: str,
     ) -> None:
-        if self._is_blacklisted_group(event):
-            return
-        async with self._sticker_send_semaphore:
-            await self._ensure_reply_context(event)
-            raw_event = getattr(event.message_obj, "raw_message", None)
-            if not isinstance(raw_event, Mapping):
+        try:
+            if self._is_blacklisted_group(event):
                 return
-            identity = parse_identity(raw_event, self._owner_ids)
-            async with self._sticker_agent_semaphore:
-                message_hint = _message_text(event)
-                _, state = await self._run_restricted_sticker_agent(
-                    event,
-                    prompt=(
-                        "The main YeBot agent has just produced a reply. Decide "
-                        "whether one saved sticker would add a genuinely useful or "
-                        "funny reaction "
-                        "to this exchange. Read the current group context and the main "
-                        "reply first. If the group is not actually talking with YeBot, "
-                        "or the exchange has no concrete conversational value, do "
-                        "nothing. Do not react to contextless questions such as what "
-                        "the group is "
-                        "talking about, what an undefined X is, or what X means.\n"
-                        "If a reaction is worthwhile, call yebot_sticker_search "
-                        "exactly once with a concise meaning query. Inspect the "
-                        "returned candidates and call yebot_sticker_send only when one "
-                        "is a strong match. Send at most one sticker. If no candidate "
-                        "fits, do nothing. Never send "
-                        "text and never invent sticker IDs.\n"
-                        "Current group message and reply context:\n"
-                        f"{message_hint or '[no text]'}\n"
-                        f"Main YeBot reply:\n{response_text.strip()[:4000]}"
-                    ),
-                    allowed_tools=("yebot_sticker_search", "yebot_sticker_send"),
-                    mode="sticker_send",
+            async with self._sticker_send_semaphore:
+                await self._ensure_reply_context(event)
+                raw_event = getattr(event.message_obj, "raw_message", None)
+                get_extra = getattr(event, "get_extra", None)
+                current_key = automatic_sticker_key(raw_event)
+                current_token = (
+                    str(get_extra(_AUTO_STICKER_SOURCE_TOKEN_EXTRA, "")).strip()
+                    if callable(get_extra)
+                    else ""
                 )
-                logger.info(
-                    "YeBot automatic sticker send finished "
-                    "group=%s message=%s sent=%s agent_response=%s",
-                    identity.group_id,
-                    _request_id(event),
-                    state.get("sent", False),
-                    bool(_),
-                )
+                if (
+                    not is_registered_automatic_sticker_event(
+                        raw_event,
+                        observed_message_key=source_key,
+                        observed_event_token=source_token,
+                        bot_id=event.get_self_id().strip() or self._bot_id,
+                    )
+                    or current_key != source_key
+                    or current_token != source_token
+                ):
+                    logger.info(
+                        "YeBot automatic sticker source expired group=%s message=%s",
+                        event_group_id(event),
+                        _request_id(event),
+                    )
+                    return
+                identity = parse_identity(raw_event, self._owner_ids)
+                async with self._sticker_agent_semaphore:
+                    message_hint = _message_text(event)
+                    _, state = await self._run_restricted_sticker_agent(
+                        event,
+                        prompt=(
+                            "The main YeBot agent has just produced a reply. Decide "
+                            "whether one saved sticker would add a genuinely useful or "
+                            "funny reaction to this exchange. Read the current group "
+                            "context and the main reply first. If the group is not "
+                            "actually talking with YeBot, or the exchange has no "
+                            "concrete conversational value, do nothing. Do not react "
+                            "to contextless questions such as what the group is "
+                            "talking about, what an undefined X is, or what X means.\n"
+                            "If a reaction is worthwhile, call yebot_sticker_search "
+                            "exactly once with a concise meaning query. Inspect the "
+                            "returned candidates and call yebot_sticker_send only when "
+                            "one is a strong match. Send at most one sticker. If no "
+                            "candidate fits, do nothing. Never send text and never "
+                            "invent sticker IDs.\n"
+                            "Current group message and reply context:\n"
+                            f"{message_hint or '[no text]'}\n"
+                            f"Main YeBot reply:\n{response_text.strip()[:4000]}"
+                        ),
+                        allowed_tools=("yebot_sticker_search", "yebot_sticker_send"),
+                        mode="sticker_send",
+                    )
+                    logger.info(
+                        "YeBot automatic sticker send finished "
+                        "group=%s message=%s sent=%s agent_response=%s",
+                        identity.group_id,
+                        _request_id(event),
+                        state.get("sent", False),
+                        bool(_),
+                    )
+        finally:
+            release_automatic_sticker_run(self._automatic_sticker_run_state)
 
     @filter.custom_filter(_ReplyWakeFilter)
     @filter.platform_adapter_type(filter.PlatformAdapterType.AIOCQHTTP)
@@ -3047,11 +3168,11 @@ class YeBot(Star):
         """
 
         state = _AUTO_STICKER_SEND_STATE.get()
-        if state is not None and state.get("sent"):
+        if state is not None and not reserve_automatic_sticker_send_attempt(state):
             return json.dumps(
                 {
                     "status": "failed",
-                    "summary": "automatic sticker send limit reached",
+                    "summary": "automatic sticker send attempt limit reached",
                 },
                 ensure_ascii=False,
             )
@@ -3614,18 +3735,7 @@ class YeBot(Star):
             observation.identity.role,
             observation.mentioned,
         )
-        set_extra = getattr(event, "set_extra", None)
-        source_key = automatic_sticker_key(raw_event)
-        bot_id = event_bot_id or self._bot_id
-        if (
-            callable(set_extra)
-            and source_key
-            and observation.identity.user_id
-            and observation.identity.user_id != bot_id
-        ):
-            # Automatic reactions must be tied to this incoming human message.
-            # Reused events and background tasks do not carry this marker.
-            set_extra(_AUTO_STICKER_SOURCE_EXTRA, source_key)
+        source_key, _ = self._register_automatic_sticker_source(event, raw_event)
         if self._observe_only:
             return
 

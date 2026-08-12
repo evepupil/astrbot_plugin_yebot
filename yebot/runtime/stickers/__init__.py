@@ -4,7 +4,15 @@ from .agent import (
     build_sticker_consider_arguments,
     reserve_automatic_sticker_search,
 )
-from .auto import automatic_sticker_key, should_queue_automatic_sticker
+from .auto import (
+    automatic_sticker_key,
+    is_registered_automatic_sticker_event,
+    release_automatic_sticker_run,
+    reserve_automatic_sticker_event,
+    reserve_automatic_sticker_run,
+    reserve_automatic_sticker_send_attempt,
+    should_queue_automatic_sticker,
+)
 from .caption_cache import (
     STICKER_CAPTION_PROMPT_VERSION,
     StickerCaptionCache,
@@ -48,5 +56,10 @@ __all__ = [
     "build_sticker_consider_arguments",
     "reserve_automatic_sticker_search",
     "automatic_sticker_key",
+    "is_registered_automatic_sticker_event",
+    "release_automatic_sticker_run",
+    "reserve_automatic_sticker_event",
+    "reserve_automatic_sticker_run",
+    "reserve_automatic_sticker_send_attempt",
     "should_queue_automatic_sticker",
 ]

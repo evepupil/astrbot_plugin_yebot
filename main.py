@@ -89,6 +89,10 @@ try:
         parse_explicit_memory_write_request,
         render_memory_context,
     )
+    from .yebot.runtime.message_dedup import (
+        is_duplicate_response,
+        is_successful_message_send,
+    )
     from .yebot.runtime.model_ratings import ModelRatingsClient
     from .yebot.runtime.observer import observe_event
     from .yebot.runtime.release import AuditLogWriter, RuntimeMetrics
@@ -213,6 +217,10 @@ except ImportError:
         is_explicit_memory_write_request,
         parse_explicit_memory_write_request,
         render_memory_context,
+    )
+    from yebot.runtime.message_dedup import (
+        is_duplicate_response,
+        is_successful_message_send,
     )
     from yebot.runtime.model_ratings import ModelRatingsClient
     from yebot.runtime.observer import observe_event
@@ -460,6 +468,7 @@ _GROUP_REPLY_DECISION_EXTRA = "yebot.group_reply_decision"
 _REPLY_TO_BOT_EXTRA = "yebot.reply_to_bot"
 _AUTO_STICKER_QUEUED_EXTRA = "yebot.auto_sticker_queued"
 _BLACKLISTED_GROUP_EXTRA = "yebot.blacklisted_group"
+_TOOL_SENT_TEXTS_EXTRA = "yebot.tool_sent_texts"
 _GROUP_REPLY_GUIDANCE = """\
 For group messages, answer only when the available message and context contain
 enough concrete information for a useful response. The context does not need to
@@ -514,6 +523,22 @@ def _should_suppress_contextless_group_reply(
         isinstance(decision, GroupReplyDecision)
         and decision.reason is GroupReplyReason.AI_ALLOW
     )
+
+
+def _tool_sent_texts(event: AstrMessageEvent) -> tuple[str, ...]:
+    get_extra = getattr(event, "get_extra", None)
+    values = get_extra(_TOOL_SENT_TEXTS_EXTRA, ()) if callable(get_extra) else ()
+    if not isinstance(values, (list, tuple)):
+        return ()
+    return tuple(value for value in values if isinstance(value, str))
+
+
+def _remember_tool_sent_text(event: AstrMessageEvent, text: str) -> None:
+    set_extra = getattr(event, "set_extra", None)
+    if not callable(set_extra) or not text.strip():
+        return
+    sent_texts = (*_tool_sent_texts(event), text)
+    set_extra(_TOOL_SENT_TEXTS_EXTRA, sent_texts[-8:])
 
 
 _AGENT_TOOL_GUIDANCE = """\
@@ -1953,6 +1978,13 @@ class YeBot(Star):
             )
             result.chain = []
             return
+        if is_duplicate_response(response_text, _tool_sent_texts(event)):
+            logger.info(
+                "YeBot suppressed duplicate tool response message=%s",
+                _request_id(event),
+            )
+            result.chain = []
+            return
         self._queue_automatic_sticker(event, response_text)
         mode = self._event_response_mode(event)
         if mode is None:
@@ -2711,6 +2743,10 @@ class YeBot(Star):
             "message.send",
             {"message": message},
         )
+        if result.outcomes:
+            outcome = result.outcomes[-1]
+            if outcome.ok and is_successful_message_send(outcome.value):
+                _remember_tool_sent_text(event, message)
         return self._encode_run(result)
 
     @filter.llm_tool(name="yebot_message_recall")

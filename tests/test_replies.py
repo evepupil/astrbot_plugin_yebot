@@ -78,7 +78,7 @@ def test_recent_group_context_marks_bot_messages_without_user_ids() -> None:
 
     context = asyncio.run(resolve_recent_group_context(event, client, "123"))
 
-    assert "[YeBot] bot reply" in context
+    assert "[YeBot QQ=123] bot reply" in context
     assert "current" not in context
 
 
@@ -86,10 +86,30 @@ def test_reply_context_uses_attached_astrbot_text_without_action() -> None:
     event = ReplyEvent(ReplyComponent(12, "原消息内容"))
 
     references = extract_reply_references(event)
-    context = asyncio.run(resolve_reply_context(event, None))
+    context = asyncio.run(resolve_reply_context(event, None, bot_id="123"))
 
     assert references[0].message_id == "12"
     assert "原消息内容" in context
+
+
+def test_reply_context_marks_attached_bot_message_with_sender_identity() -> None:
+    event = ReplyEvent(
+        ReplyComponent(12, "AstrBot 已解析的机器人内容"),
+        raw_message={"message": [{"type": "reply", "data": {"id": "12"}}]},
+    )
+    client = FakeActionClient(
+        {
+            "data": {
+                "sender": {"user_id": 123, "nickname": "YeBot"},
+                "message": [{"type": "text", "data": {"text": "机器人原文"}}],
+            }
+        }
+    )
+
+    context = asyncio.run(resolve_reply_context(event, client, bot_id="123"))
+
+    assert "发送者=[YeBot QQ=123 昵称=YeBot]" in context
+    assert "AstrBot 已解析的机器人内容" in context
 
 
 def test_reply_context_fetches_missing_body_from_onebot() -> None:
@@ -108,7 +128,7 @@ def test_reply_context_fetches_missing_body_from_onebot() -> None:
         }
     )
 
-    context = asyncio.run(resolve_reply_context(event, client))
+    context = asyncio.run(resolve_reply_context(event, client, bot_id="123"))
 
     assert client.calls == [("get_msg", {"message_id": 12})]
     assert "被引用的文本" in context

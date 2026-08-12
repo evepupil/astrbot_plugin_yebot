@@ -141,7 +141,10 @@ class AgentOrchestrator:
                 return StepOutcome(
                     step,
                     ok,
-                    value=value if ok else None,
+                    # Keep the sanitized ToolResult on failures so the adapter
+                    # can tell the model whether this was a permission, mode,
+                    # parameter, confirmation, or execution problem.
+                    value=value,
                     error=None if ok else _tool_result_error(value),
                 )
 

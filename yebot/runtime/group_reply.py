@@ -242,7 +242,8 @@ def build_group_reply_judgement_prompt(
         "answered even when it asks for clarification.\n\n"
         f"Current message:\n{current}\n\n"
         f"Quoted reply context:\n{referenced}\n\n"
-        f"Recent group history (sender labels are redacted):\n{recent}"
+        f"Recent group history (sender labels include YeBot/member, QQ, nickname, "
+        f"and group card when available):\n{recent}"
     )
 
 

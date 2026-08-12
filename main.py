@@ -41,6 +41,7 @@ try:
         SubAgentRequest,
         SubAgentResult,
         TaskStep,
+        encode_agent_run_result,
     )
     from .yebot.runtime.group_blacklist import (
         event_group_id,
@@ -119,11 +120,14 @@ try:
         StickerImageRef,
         StickerService,
         StickerStore,
+        automatic_sticker_key,
         build_sticker_consider_arguments,
         enrich_history_image_source,
         extract_history_image_sources,
         extract_image_components,
         reserve_automatic_sticker_search,
+        resolve_replied_sticker_image,
+        should_queue_automatic_sticker,
     )
     from .yebot.runtime.system_info import SystemInfoCollector, TokenUsageTracker
     from .yebot.runtime.targeting import (
@@ -170,6 +174,7 @@ except ImportError:
         SubAgentRequest,
         SubAgentResult,
         TaskStep,
+        encode_agent_run_result,
     )
     from yebot.runtime.group_blacklist import (
         event_group_id,
@@ -248,11 +253,14 @@ except ImportError:
         StickerImageRef,
         StickerService,
         StickerStore,
+        automatic_sticker_key,
         build_sticker_consider_arguments,
         enrich_history_image_source,
         extract_history_image_sources,
         extract_image_components,
         reserve_automatic_sticker_search,
+        resolve_replied_sticker_image,
+        should_queue_automatic_sticker,
     )
     from yebot.runtime.system_info import SystemInfoCollector, TokenUsageTracker
     from yebot.runtime.targeting import (
@@ -465,8 +473,11 @@ _RECALL_CANDIDATE_IDS_EXTRA = "yebot.recall.candidate_ids"
 _BACKGROUND_TOOL_CONTEXT_EXTRA = "yebot.background_tool_context"
 _POKE_EVENT_EXTRA = "yebot.poke_event"
 _GROUP_REPLY_DECISION_EXTRA = "yebot.group_reply_decision"
+_RECENT_GROUP_CONTEXT_EXTRA = "yebot.recent_group_context"
 _REPLY_TO_BOT_EXTRA = "yebot.reply_to_bot"
 _AUTO_STICKER_QUEUED_EXTRA = "yebot.auto_sticker_queued"
+_AUTO_STICKER_KEY_EXTRA = "yebot.auto_sticker_key"
+_AUTO_STICKER_SOURCE_EXTRA = "yebot.auto_sticker_source"
 _BLACKLISTED_GROUP_EXTRA = "yebot.blacklisted_group"
 _TOOL_SENT_TEXTS_EXTRA = "yebot.tool_sent_texts"
 _GROUP_REPLY_GUIDANCE = """\
@@ -563,6 +574,12 @@ YeBot 工具选择规则：
 - 这些规则只约束工具选择，权限、管理员身份、目标保护和配额交给 YeBot 工具网关检查。
   权限允许时不要追加道德化拒绝、不要声称“不能乱禁言”。
 - 工具成功后，以工具返回的 `params.user_id` 和实际状态为准回复，不能再说“不知道目标”。
+- 工具返回 `role_denied`、`out_of_scope`、`group_required` 或 `unknown_permission` 时，
+  如实说明权限、群范围或身份限制；返回 `execution_disabled` 时说明当前处于观察模式、
+  黑名单群或配置禁用。返回 `invalid_parameters` 时修正参数或向用户补齐信息。
+  返回 `confirmation_required` 时展示工具返回的确认编号并等待原操作者确认。
+  只有 `timeout`、`execution_error`、`unknown_tool` 等执行类状态才描述为执行失败。
+  禁止把权限限制、观察模式或配置禁用说成“系统抽风”。
 - 用户要求向当前群发送指定内容时，调用 yebot_message_send；普通聊天回复不要调用它。
   需要真实 @ 成员时，把人名、群名片、回复对象或指代放入 target；不要把 @数字当作
   目标猜测。工具只会把已解析的唯一成员转换为 QQ At。
@@ -588,6 +605,9 @@ YeBot 工具选择规则：
   提交 should_collect、asset_kind、reaction_ready、confidence、图片含义和简短标签；
   即使决定不收藏也要明确提交分类决定。不要向用户要求说出工具名。表情库由所有群共享，
   重复图片不会重复保存。
+- 用户回复一张图片或表情包并说“保存”“收藏”“存一下”“收下这个”等时，直接调用
+  yebot_sticker_collect_recent，默认 limit=1。工具会优先读取被回复的消息，不要要求用户
+  把图片重新发送；当前消息没有明确回复图片时，才读取群里最近图片作为兜底。
 - 用户明确说收藏“上面/之前/刚才”的几张图片或表情包，而当前消息没有附图时，调用
   yebot_sticker_collect_recent 读取当前群最近图片；不要要求用户把图片重新发一遍。
 - 只有主人要求查看或清理表情库时，才调用 yebot_sticker_list 或
@@ -1025,6 +1045,7 @@ class YeBot(Star):
         context = await resolve_reply_context(
             event,
             action_client,
+            bot_id=event.get_self_id().strip() or self._bot_id,
         )
         bot_id = event.get_self_id().strip() or self._bot_id
         reply_to_bot = await reply_references_user(event, action_client, bot_id)
@@ -1054,6 +1075,17 @@ class YeBot(Star):
             or raw_event.get("message_type") != "group"
         ):
             return None
+        source_key = automatic_sticker_key(raw_event)
+        sender = raw_event.get("sender")
+        sender_id = (
+            normalize_id(sender.get("user_id") or sender.get("qq"))
+            if isinstance(sender, Mapping)
+            else ""
+        )
+        bot_id = event.get_self_id().strip() or self._bot_id
+        set_extra = getattr(event, "set_extra", None)
+        if callable(set_extra) and source_key and sender_id and sender_id != bot_id:
+            set_extra(_AUTO_STICKER_SOURCE_EXTRA, source_key)
         get_extra = getattr(event, "get_extra", None)
         cached = (
             get_extra(_GROUP_REPLY_DECISION_EXTRA, None)
@@ -1073,6 +1105,8 @@ class YeBot(Star):
             action_client,
             event.get_self_id().strip() or self._bot_id,
         )
+        if callable(set_extra):
+            set_extra(_RECENT_GROUP_CONTEXT_EXTRA, recent_context)
         reply_to_bot = bool(
             get_extra(_REPLY_TO_BOT_EXTRA, False) if callable(get_extra) else False
         )
@@ -1319,27 +1353,47 @@ class YeBot(Star):
     ) -> None:
         """Start one sticker decision after a real main-agent response exists."""
 
-        if (
-            not self._sticker_auto_send
-            or self._observe_only
-            or not response_text.strip()
-            or _BACKGROUND_TOOL_MODE.get()
-            or _event_allows_background_tools(event)
-            or self._is_blacklisted_group(event)
-        ):
-            return
         raw_event = getattr(getattr(event, "message_obj", None), "raw_message", None)
-        if (
-            not isinstance(raw_event, Mapping)
-            or raw_event.get("message_type") != "group"
+        get_extra = getattr(event, "get_extra", None)
+        group_decision = (
+            get_extra(_GROUP_REPLY_DECISION_EXTRA, None)
+            if callable(get_extra)
+            else None
+        )
+        group_reply_allowed = isinstance(group_decision, GroupReplyDecision) and (
+            group_decision.should_call_llm
+        )
+        observed_message_key = (
+            str(get_extra(_AUTO_STICKER_SOURCE_EXTRA, "")).strip()
+            if callable(get_extra)
+            else ""
+        )
+        message_key = automatic_sticker_key(raw_event)
+        if not self._sticker_auto_send or not should_queue_automatic_sticker(
+            raw_event,
+            response_text=response_text,
+            current_text=_current_message_text(event),
+            observed_message_key=observed_message_key,
+            has_image=bool(extract_image_components(event)),
+            group_reply_allowed=group_reply_allowed,
+            observe_only=self._observe_only,
+            background_mode=bool(_BACKGROUND_TOOL_MODE.get()),
+            background_tools_allowed=_event_allows_background_tools(event),
+            blacklisted=self._is_blacklisted_group(event),
+            bot_id=event.get_self_id().strip() or self._bot_id,
         ):
             return
-        get_extra = getattr(event, "get_extra", None)
+        previous_key = (
+            get_extra(_AUTO_STICKER_KEY_EXTRA, "") if callable(get_extra) else ""
+        )
+        if message_key and previous_key == message_key:
+            return
         if callable(get_extra) and get_extra(_AUTO_STICKER_QUEUED_EXTRA, False):
             return
         set_extra = getattr(event, "set_extra", None)
         if callable(set_extra):
             set_extra(_AUTO_STICKER_QUEUED_EXTRA, True)
+            set_extra(_AUTO_STICKER_KEY_EXTRA, message_key)
         self._track_background(self._auto_send_sticker(event, response_text))
 
     async def _migrate_native_stickers(self, event: AstrMessageEvent) -> None:
@@ -1497,6 +1551,35 @@ class YeBot(Star):
         if client is None:
             return ()
         bounded_limit = max(1, min(limit, 12))
+        if extract_reply_references(event):
+            try:
+                replied_ref = await resolve_replied_sticker_image(
+                    event,
+                    client,
+                    max_bytes=self._image_reference_max_bytes,
+                    component_factory=self._reply_image_component,
+                )
+            except ImageGenerationError as error:
+                logger.warning(
+                    "YeBot replied sticker image lookup failed message=%s error=%s",
+                    _request_id(event),
+                    str(error),
+                )
+                # Do not fall through to an unrelated recent image after an
+                # explicit reply target failed to load.
+                return ()
+            if replied_ref is not None:
+                logger.info(
+                    "YeBot replied sticker image loaded message=%s source_message=%s",
+                    _request_id(event),
+                    replied_ref.source_message_id,
+                )
+                return (replied_ref,)
+            logger.info(
+                "YeBot replied sticker target has no readable image message=%s",
+                _request_id(event),
+            )
+            return ()
         try:
             response = await client.call_action(
                 "get_group_msg_history",
@@ -1543,6 +1626,18 @@ class YeBot(Star):
             len(refs),
         )
         return tuple(refs)
+
+    @staticmethod
+    def _reply_image_component(data_url: str) -> object | None:
+        header, separator, encoded = data_url.partition(",")
+        if (
+            not separator
+            or not encoded
+            or not header.lower().startswith("data:image/")
+            or ";base64" not in header.lower()
+        ):
+            return None
+        return Image.fromBase64(f"base64://{encoded}")
 
     @staticmethod
     def _history_image_component(source: HistoryImageSource) -> object | None:
@@ -1862,6 +1957,17 @@ class YeBot(Star):
             )
             if not group_reply_decision.should_call_llm:
                 return
+        get_extra = getattr(event, "get_extra", None)
+        recent_context = (
+            get_extra(_RECENT_GROUP_CONTEXT_EXTRA, "") if callable(get_extra) else ""
+        )
+        if isinstance(recent_context, str) and recent_context.strip():
+            context_prompt = (
+                "Recent group context with sender identity (context only):\n"
+                + recent_context.strip()
+            )
+            if context_prompt not in request.prompt:
+                request.prompt = f"{request.prompt.rstrip()}\n\n{context_prompt}"
         response_mode = self._prepare_response_mode(event, current_message_text)
         if await self._prehandle_owner_reminder(event, current_message_text):
             return
@@ -2482,13 +2588,7 @@ class YeBot(Star):
 
     @staticmethod
     def _encode_run(result: AgentRunResult) -> str:
-        values = [outcome.value for outcome in result.outcomes if outcome.ok]
-        payload = {
-            "status": result.status.value,
-            "summary": result.summary,
-            "result": values[0] if len(values) == 1 else values,
-        }
-        return json.dumps(payload, ensure_ascii=False, default=str)
+        return encode_agent_run_result(result)
 
     @staticmethod
     def _cache_recall_candidate_ids(
@@ -3514,6 +3614,18 @@ class YeBot(Star):
             observation.identity.role,
             observation.mentioned,
         )
+        set_extra = getattr(event, "set_extra", None)
+        source_key = automatic_sticker_key(raw_event)
+        bot_id = event_bot_id or self._bot_id
+        if (
+            callable(set_extra)
+            and source_key
+            and observation.identity.user_id
+            and observation.identity.user_id != bot_id
+        ):
+            # Automatic reactions must be tied to this incoming human message.
+            # Reused events and background tasks do not carry this marker.
+            set_extra(_AUTO_STICKER_SOURCE_EXTRA, source_key)
         if self._observe_only:
             return
 

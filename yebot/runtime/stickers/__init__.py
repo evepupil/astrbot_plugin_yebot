@@ -4,6 +4,7 @@ from .agent import (
     build_sticker_consider_arguments,
     reserve_automatic_sticker_search,
 )
+from .auto import automatic_sticker_key, should_queue_automatic_sticker
 from .caption_cache import (
     STICKER_CAPTION_PROMPT_VERSION,
     StickerCaptionCache,
@@ -16,6 +17,7 @@ from .history import (
 )
 from .models import StickerRecord
 from .native import NativeSticker, NativeStickerClient, parse_native_sticker
+from .reply import resolve_replied_sticker_image
 from .service import (
     STICKER_IMAGE_REFS_EXTRA,
     StickerImageRef,
@@ -35,6 +37,7 @@ __all__ = [
     "NativeStickerClient",
     "extract_image_components",
     "extract_image_refs",
+    "resolve_replied_sticker_image",
     "HistoryImageSource",
     "extract_history_image_sources",
     "enrich_history_image_source",
@@ -44,4 +47,6 @@ __all__ = [
     "image_reference_fingerprint",
     "build_sticker_consider_arguments",
     "reserve_automatic_sticker_search",
+    "automatic_sticker_key",
+    "should_queue_automatic_sticker",
 ]

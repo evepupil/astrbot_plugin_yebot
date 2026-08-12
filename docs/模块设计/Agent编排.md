@@ -4,7 +4,7 @@
 - 对应代码：`yebot/runtime/agents/`、`main.py`
 - 所属里程碑：[M5](../roadmap.md#m5)
 - 当前状态：进行中
-- 最近更新时间：2026-08-07
+- 最近更新时间：2026-08-13
 
 ## 职责与边界
 
@@ -38,6 +38,8 @@ AstrBot 原生 `active_agent` 定时任务使用 `CronMessageEvent`，这个事�
 - 路由必须携带固定原因，例如 `explicit_tool_request`、`owner_explicit_tool_request`、`explicit_subagent_request`、`bot_not_addressed`，便于日志和后续审计。未被真实 @ 或唤醒前缀叫到的工具调用会返回失败，不会再被编排器汇总为“已执行”。
 - 默认预算为最多 6 步、并发 1、总超时 30 秒，可在插件配置中调整；达到步骤上限后不再执行剩余步骤。
 - 单步异常只返回异常类型，编排器停止后续步骤并汇总失败原因，不把平台异常正文交给模型。
+  工具网关返回的权限、群范围、观察模式、参数、确认和执行状态会保留在对应步骤中，
+  主 Agent 可以据此解释“没有权限/当前禁用/需要确认”，不能统称为系统故障。
 - SubAgent 的默认白名单只有 `group.get_members`；白名单构造时硬性拒绝对外消息工具。
 - 后台 Agent 的工具调用允许没有 @ 机器人的消息地址状态，但只接受 `BackgroundToolContext` 提供的群范围和执行者身份；普通提醒继续由 YeBot `JobScheduler` 负责持久化和执行。
 
@@ -47,7 +49,7 @@ AstrBot 原生 `active_agent` 定时任务使用 `CronMessageEvent`，这个事�
 `target`，YeBot 只接受唯一成员并把标记交给 OneBot 结构化消息段；任意普通 `@数字`
 不会被自动转换。
 
-`models.py` 定义消息摘要、路由决定、任务步骤、计划、预算、SubAgent 请求/结果和运行结果。`router.py` 提供显式意图路由和计划构造。`orchestrator.py` 以串行步骤为默认，支持同组并发、总超时、步骤上限、异常收敛和稳定汇总。`tracker.py` 按请求 ID 累计主 Agent 连续工具调用，防止模型通过多次函数调用绕过总步骤和总超时预算。
+`models.py` 定义消息摘要、路由决定、任务步骤、计划、预算、SubAgent 请求/结果和运行结果。`router.py` 提供显式意图路由和计划构造。`orchestrator.py` 以串行步骤为默认，支持同组并发、总超时、步骤上限、异常收敛和稳定汇总。`result_encoding.py` 把每一步的工具状态、权限决策和安全错误编码给模型，避免失败步骤被误读为没有结果。`tracker.py` 按请求 ID 累计主 Agent 连续工具调用，防止模型通过多次函数调用绕过总步骤和总超时预算。
 
 `main.py` 已通过 `@filter.llm_tool` 暴露以下 AstrBot 工具，并通过 `@filter.on_llm_request` 提供自然语言工具选择规则和主人提醒直达入口：
 
@@ -85,7 +87,7 @@ AstrBot 原生 `active_agent` 定时任务使用 `CronMessageEvent`，这个事�
 
 `tests/test_background.py` 覆盖 Cron 元数据、群角色查询、主人身份、无原始消息时的目标解析和上下文绑定；`tests/test_onebot_tools.py` 覆盖从 AstrBot 平台上下文恢复定时任务 action 客户端。
 
-`tests/test_agents.py` 覆盖可解释路由、主人未 @ 的工具直达、唤醒前缀直达、普通成员未被 @ 或唤醒的拒绝、工具/SubAgent 计划、SubAgent 发消息禁配、串行多工具、步骤上限、异常收敛、总超时和 SubAgent 结果汇总；`tests/test_replies.py`、`tests/test_permissions.py` 和 `tests/test_onebot_tools.py` 覆盖引用解析、撤回工具的引用或候选入口、角色权限、系统运维工具的主人限制、候选排除当前指令、当前群校验和 OneBot action。系统信息采集与 Token usage 汇总由 `tests/test_system_info.py` 覆盖。容器内的新增工具仍需重载后做运行态验收。
+`tests/test_agents.py` 覆盖可解释路由、主人未 @ 的工具直达、唤醒前缀直达、普通成员未被 @ 或唤醒的拒绝、工具/SubAgent 计划、SubAgent 发消息禁配、串行多工具、步骤上限、异常收敛、权限/观察模式结果保留、总超时和 SubAgent 结果汇总；`tests/test_replies.py`、`tests/test_permissions.py` 和 `tests/test_onebot_tools.py` 覆盖引用解析、撤回工具的引用或候选入口、角色权限、系统运维工具的主人限制、候选排除当前指令、当前群校验和 OneBot action。系统信息采集与 Token usage 汇总由 `tests/test_system_info.py` 覆盖。容器内的新增工具仍需重载后做运行态验收。
 
 运行中的 AstrBot 验收需要：用自然语言询问群成员、创建提醒、读取测试文件或公开网页；提出禁言请求确认直接走 dry-run/OneBot action；提出踢人请求确认先返回一次性编号，再由原操作者明确确认；提出只读整理任务确认 SubAgent 只能使用只读白名单；发送“戳一下某人”并让群友戳机器人，确认主动工具和被动事件都能进入正确路径。
 
@@ -120,3 +122,4 @@ AstrBot 原生 `active_agent` 定时任务使用 `CronMessageEvent`，这个事�
 - 2026-08-05：补充引用段后的唤醒前缀地址恢复，保留工具权限、确认和额度边界。
 - 2026-08-06：新增主人专用系统运维只读工具，采集 CPU、内存、系统/进程运行时间和 AstrBot Token usage 观察值。
 - 2026-08-07：新增管理员和主人专用群名片修改工具，目标解析后调用 OneBot `set_group_card`。
+- 2026-08-13：保留工具网关的权限、观察模式和执行状态，供主 Agent 按真实原因回复；群聊历史上下文同时注入带发送者身份的窗口。

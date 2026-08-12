@@ -1,4 +1,5 @@
 import asyncio
+import json
 
 import pytest
 
@@ -16,7 +17,9 @@ from yebot.runtime.agents import (
     SubAgentRequest,
     SubAgentResult,
     TaskStep,
+    encode_agent_run_result,
 )
+from yebot.runtime.tools import ToolResult, ToolResultCode
 
 
 def summary(
@@ -255,6 +258,28 @@ def test_orchestrator_converges_after_tool_failure() -> None:
     assert result.summary == "step one failed: RuntimeError"
     assert calls == ["one"]
     assert result.outcomes[0].error == "RuntimeError"
+
+
+def test_agent_encoding_keeps_tool_permission_or_mode_failures() -> None:
+    route = AgentRouter().route(summary(), requested_tool="group.get_members")
+    plan = AgentPlan(
+        route,
+        steps=(TaskStep("one", StepKind.TOOL, "group.get_members"),),
+    )
+
+    async def invoke(step: TaskStep) -> ToolResult:
+        return ToolResult(
+            step.target,
+            ToolResultCode.EXECUTION_DISABLED,
+            error="observe-only mode",
+        )
+
+    result = asyncio.run(AgentOrchestrator().run(plan, tool_executor=invoke))
+    payload = json.loads(encode_agent_run_result(result))
+
+    assert payload["status"] == "failed"
+    assert payload["steps"][0]["status"] == "execution_disabled"
+    assert payload["steps"][0]["error"] == "observe-only mode"
 
 
 def test_orchestrator_applies_total_timeout() -> None:

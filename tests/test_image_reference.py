@@ -53,6 +53,7 @@ def test_resolve_reply_image_reads_inline_data_url_from_get_msg() -> None:
 
     assert result is not None
     assert result.message_id == "12"
+    assert result.source_user_id == ""
     assert result.data_url == "data:image/png;base64,aW1hZ2UtZGF0YQ=="
     assert client.calls == [("get_msg", {"message_id": 12})]
 
@@ -78,6 +79,42 @@ def test_resolve_reply_image_uses_get_image_for_file_id() -> None:
 
     assert result is not None
     assert result.data_url == "data:image/png;base64,aW1hZ2UtZGF0YQ=="
+    assert client.calls == [
+        ("get_msg", {"message_id": 12}),
+        ("get_image", {"file": "file-id"}),
+    ]
+
+
+def test_resolve_reply_image_prefers_onebot_file_when_url_is_unavailable() -> None:
+    client = FakeActionClient(
+        {
+            "get_msg": {
+                "data": {
+                    "sender": {"user_id": 42},
+                    "message": [
+                        {
+                            "type": "image",
+                            "data": {
+                                "file": "file-id",
+                                "url": "https://cdn.example.test/image.png",
+                            },
+                        }
+                    ],
+                }
+            },
+            "get_image": {
+                "data": {
+                    "base64": "aW1hZ2UtZGF0YQ==",
+                }
+            },
+        }
+    )
+
+    result = asyncio.run(resolve_reply_image(ReplyEvent(12), client))
+
+    assert result is not None
+    assert result.source_user_id == "42"
+    assert result.data_url == "data:image/jpeg;base64,aW1hZ2UtZGF0YQ=="
     assert client.calls == [
         ("get_msg", {"message_id": 12}),
         ("get_image", {"file": "file-id"}),

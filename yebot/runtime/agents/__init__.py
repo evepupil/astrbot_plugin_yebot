@@ -15,6 +15,7 @@ from .models import (
     TaskStep,
 )
 from .orchestrator import AgentOrchestrator, SubAgentExecutor, ToolExecutor
+from .result_encoding import encode_agent_run_result, encode_tool_result
 from .router import AgentPlanner, AgentRouter
 from .tracker import AgentRequestTracker, Reservation
 
@@ -26,6 +27,8 @@ __all__ = [
     "AgentRunResult",
     "AgentRouter",
     "AgentRequestTracker",
+    "encode_agent_run_result",
+    "encode_tool_result",
     "MessageSummary",
     "RouteDecision",
     "RouteKind",

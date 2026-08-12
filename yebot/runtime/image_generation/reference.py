@@ -11,6 +11,7 @@ import mimetypes
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
@@ -29,6 +30,7 @@ class ReplyImage:
 
     message_id: str
     data_url: str
+    source_user_id: str = ""
 
 
 async def resolve_reply_image(
@@ -71,7 +73,11 @@ async def resolve_reply_image(
             last_error = error
             continue
         if data_url is not None:
-            return ReplyImage(reference.message_id, data_url)
+            return ReplyImage(
+                reference.message_id,
+                data_url,
+                _message_sender_id(response),
+            )
     if last_error is not None:
         raise ImageGenerationError("failed to read the replied image") from last_error
     return None
@@ -100,6 +106,10 @@ async def _resolve_source(
     if parsed.scheme:
         return None
 
+    local = await asyncio.to_thread(_read_local_image, normalized, max_bytes)
+    if local is not None:
+        return local
+
     try:
         response = await _call_action(action_client, "get_image", file=normalized)
     except Exception as error:
@@ -127,11 +137,13 @@ async def _resolve_source_without_action(
     if normalized.lower().startswith("base64://"):
         return _data_url_from_base64(normalized[9:], "image/jpeg", max_bytes)
     parsed = urlparse(normalized)
-    if parsed.scheme.lower() not in {"http", "https"}:
+    if parsed.scheme.lower() in {"http", "https"}:
+        fetch = downloader or _download_image
+        data, media_type = await asyncio.to_thread(fetch, normalized, max_bytes)
+        return _data_url_from_bytes(data, media_type, max_bytes)
+    if parsed.scheme:
         return None
-    fetch = downloader or _download_image
-    data, media_type = await asyncio.to_thread(fetch, normalized, max_bytes)
-    return _data_url_from_bytes(data, media_type, max_bytes)
+    return await asyncio.to_thread(_read_local_image, normalized, max_bytes)
 
 
 async def _call_action(
@@ -148,9 +160,9 @@ def _extract_image_sources(response: object) -> tuple[str, ...]:
     if isinstance(response, Mapping):
         data = response.get("data", response)
     if isinstance(data, Mapping):
-        direct = _image_source(data)
-        if direct is not None:
-            return (direct,)
+        direct = _image_sources(data)
+        if direct:
+            return direct
         message = data.get("message")
         if isinstance(message, list):
             sources = [
@@ -180,16 +192,41 @@ def _segment_image_sources(segment: object) -> tuple[str, ...]:
         return ()
     data = segment.get("data")
     payload = data if isinstance(data, Mapping) else segment
-    source = _image_source(payload)
-    return (source,) if source is not None else ()
+    return _image_sources(payload)
 
 
-def _image_source(mapping: Mapping[str, Any]) -> str | None:
-    for key in ("url", "image_url", "file", "path"):
+def _image_sources(mapping: Mapping[str, Any]) -> tuple[str, ...]:
+    """Return usable image references in a recovery-friendly order.
+
+    NapCat often includes both a remote ``url`` and a QQ ``file`` identifier.
+    The remote URL may be unavailable from the AstrBot container, while
+    ``get_image`` can still resolve the file through the OneBot connection.
+    """
+
+    sources: list[str] = []
+    for key in (
+        "file",
+        "path",
+        "url",
+        "image_url",
+        "base64",
+        "base64_data",
+        "base64Data",
+    ):
         value = mapping.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    return None
+        if not isinstance(value, (str, int, float)) or isinstance(value, bool):
+            continue
+        normalized = str(value).strip()
+        if not normalized:
+            continue
+        if key in {"base64", "base64_data", "base64Data"} and not (
+            normalized.lower().startswith("data:")
+            or normalized.lower().startswith("base64://")
+        ):
+            normalized = f"base64://{normalized}"
+        if normalized not in sources:
+            sources.append(normalized)
+    return tuple(sources)
 
 
 def _cq_image_sources(message: str) -> tuple[str, ...]:
@@ -201,12 +238,27 @@ def _cq_image_sources(message: str) -> tuple[str, ...]:
                 continue
             key, value = part.split("=", 1)
             fields[key.strip().lower()] = _unescape_cq(value.strip())
-        for key in ("url", "image_url", "file"):
+        for key in ("file", "path", "url", "image_url"):
             source = fields.get(key)
             if source:
                 sources.append(source)
                 break
     return tuple(sources)
+
+
+def _message_sender_id(response: object) -> str:
+    data: object = response
+    if isinstance(response, Mapping):
+        data = response.get("data", response)
+    if not isinstance(data, Mapping):
+        return ""
+    sender = data.get("sender")
+    if not isinstance(sender, Mapping):
+        return ""
+    value = sender.get("user_id", sender.get("userId"))
+    if isinstance(value, (str, int, float)) and not isinstance(value, bool):
+        return str(value).strip()[:64]
+    return ""
 
 
 def _unescape_cq(value: str) -> str:
@@ -254,6 +306,20 @@ def _data_url_from_bytes(data: bytes, media_type: str, max_bytes: int) -> str:
         raise ImageGenerationError("replied content is not an image")
     encoded = base64.b64encode(data).decode("ascii")
     return f"data:{normalized_type};base64,{encoded}"
+
+
+def _read_local_image(path: str, max_bytes: int) -> str | None:
+    candidate = Path(path)
+    try:
+        if not candidate.is_file():
+            return None
+        data = candidate.read_bytes()
+    except (OSError, ValueError):
+        return None
+    media_type = mimetypes.guess_type(str(candidate))[0] or "image/jpeg"
+    if not media_type.startswith("image/"):
+        return None
+    return _data_url_from_bytes(data, media_type, max_bytes)
 
 
 def _download_image(url: str, max_bytes: int) -> tuple[bytes, str]:

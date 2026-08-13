@@ -36,6 +36,15 @@ class _HistoricalEvent:
         return default
 
 
+class _CurrentAndExplicitEvent(_HistoricalEvent):
+    def __init__(self, current: _Image, ref: StickerImageRef) -> None:
+        super().__init__(ref)
+        self._current = current
+
+    def get_messages(self) -> list[object]:
+        return [self._current]
+
+
 def test_history_images_are_newest_first_and_skip_current_message() -> None:
     response = {
         "data": {
@@ -160,3 +169,39 @@ def test_service_collects_an_explicit_historical_image_ref(tmp_path: Path) -> No
     record = store.list_for("100")[0]
     assert record.source_message_id == "old-message"
     assert record.source_user_id == "8"
+
+
+def test_explicit_ref_overrides_current_event_images(tmp_path: Path) -> None:
+    current_path = tmp_path / "current.jpg"
+    current_path.write_bytes(b"current-image")
+    event = _CurrentAndExplicitEvent(
+        _Image(current_path),
+        StickerImageRef(
+            object(),
+            source_message_id="replied-message",
+            source_user_id="8",
+            provider_url="data:image/gif;base64,cmVwbGllZC1pbWFnZQ==",
+        ),
+    )
+    store = StickerStore(tmp_path / "stickers")
+
+    result = asyncio.run(
+        StickerService(store).consider(
+            event,
+            Identity("42", "100", UserRole.MEMBER, "member"),
+            {
+                "should_collect": True,
+                "asset_kind": "meme",
+                "reaction_ready": True,
+                "confidence": 0.95,
+                "meaning": "精确引用",
+                "tags": ["引用"],
+                "image_index": 0,
+            },
+        )
+    )
+
+    assert result["collected"] is True  # type: ignore[index]
+    record = store.list_for("100")[0]
+    assert store.file_path(record).read_bytes() == b"replied-image"
+    assert record.source_message_id == "replied-message"

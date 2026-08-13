@@ -4,7 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from yebot.domain.identity import Identity, UserRole
-from yebot.runtime.stickers import StickerService, StickerStore
+from yebot.runtime.stickers import NativeStickerClient, StickerService, StickerStore
 from yebot.runtime.stickers.native import parse_native_sticker
 from yebot.runtime.tools import ToolContext, ToolResultCode
 from yebot.runtime.tools.onebot import OneBotActionClient, OneBotToolRuntime
@@ -103,6 +103,13 @@ class NativeFaceActionClient(FakeActionClient):
                     "md5": "native-md5",
                 }
             }
+        return {"status": "ok"}
+
+
+class HangingNativeFaceActionClient(FakeActionClient):
+    async def call_action(self, action: str, **params: object) -> object:
+        self.calls.append((action, params))
+        await asyncio.sleep(60)
         return {"status": "ok"}
 
 
@@ -513,6 +520,40 @@ def test_collection_calls_native_custom_face_action(tmp_path: Path) -> None:
     assert result.value["native_synced"] is True
     assert client.calls[0][0] == "add_custom_face"
     assert client.calls[0][1]["md5"] == hashlib.md5(b"image-data").hexdigest()
+
+
+def test_native_sync_timeout_keeps_local_collection_successful(tmp_path: Path) -> None:
+    image_path = tmp_path / "source.jpg"
+    image_path.write_bytes(b"image-data")
+    store = StickerStore(tmp_path / "stickers")
+    client = HangingNativeFaceActionClient()
+    service = StickerService(
+        store,
+        NativeStickerClient(client.call_action),
+        native_sync_timeout_seconds=0.01,
+    )
+
+    result = asyncio.run(
+        service.consider(
+            DummyEvent(DummyImage(image_path)),
+            identity(),
+            {
+                "should_collect": True,
+                "asset_kind": "reaction_sticker",
+                "reaction_ready": True,
+                "confidence": 0.95,
+                "meaning": "开心",
+                "tags": ["开心"],
+            },
+        )
+    )
+
+    assert result["collected"] is True  # type: ignore[index]
+    assert result["native_synced"] is False  # type: ignore[index]
+    assert result["native_sync_pending"] is True  # type: ignore[index]
+    record = store.list_for("100")[0]
+    assert store.file_path(record).read_bytes() == b"image-data"
+    assert client.calls[0][0] == "add_custom_face"
 
 
 def test_native_face_fields_are_persisted_and_sent_as_mface(tmp_path: Path) -> None:

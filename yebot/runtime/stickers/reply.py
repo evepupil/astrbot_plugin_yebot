@@ -34,4 +34,36 @@ async def resolve_replied_sticker_image(
         component,
         source_message_id=image.message_id,
         source_user_id=image.source_user_id,
+        provider_url=image.data_url,
     )
+
+
+def explicit_reply_collect_recent_shortcut(value: object) -> dict[str, object] | None:
+    """Stop history collection when an explicit reply was already resolved."""
+
+    if isinstance(value, StickerImageRef):
+        return {
+            "status": "success",
+            "summary": (
+                "history lookup skipped because the replied image is already "
+                "attached; call yebot_sticker_consider once with image_index 0"
+            ),
+            "result": {
+                "candidate_images": 1,
+                "collected": False,
+                "reason": "explicit_reply_already_attached",
+                "next_tool": "yebot_sticker_consider",
+                "image_index": 0,
+            },
+        }
+    if value == "unreadable":
+        return {
+            "status": "success",
+            "summary": "the replied image is unreadable; no history lookup was run",
+            "result": {
+                "candidate_images": 0,
+                "collected": False,
+                "reason": "quoted_image_unreadable",
+            },
+        }
+    return None

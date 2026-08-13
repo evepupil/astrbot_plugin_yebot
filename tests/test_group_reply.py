@@ -68,6 +68,19 @@ def test_direct_address_and_reply_to_bot_bypass_ai_judgement() -> None:
     assert replied.reason is GroupReplyReason.REPLY_TO_BOT
 
 
+def test_explicit_action_bypasses_ai_judgement() -> None:
+    decision = initial_group_reply_decision(
+        directly_addressed=False,
+        reply_to_bot=False,
+        current_text="保存这个表情包",
+        explicit_action=True,
+    )
+
+    assert decision.should_call_llm
+    assert decision.reason is GroupReplyReason.EXPLICIT_ACTION
+    assert not decision.needs_ai_judgement
+
+
 def test_empty_group_content_is_rejected_without_a_model_call() -> None:
     decision = initial_group_reply_decision(
         directly_addressed=False,

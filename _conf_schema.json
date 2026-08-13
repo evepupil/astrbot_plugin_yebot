@@ -154,6 +154,14 @@
     "minimum": 1,
     "maximum": 4
   },
+  "sticker_explicit_save_timeout_seconds": {
+    "type": "float",
+    "title": "引用表情读取超时秒数",
+    "description": "用户回复图片并明确要求保存时，精确读取该引用图片的最长等待时间。",
+    "default": 60,
+    "minimum": 5,
+    "maximum": 110
+  },
   "sticker_send_probability": {
     "type": "float",
     "title": "Automatic sticker probability",

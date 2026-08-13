@@ -3,7 +3,11 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 
-from yebot.runtime.stickers import resolve_replied_sticker_image
+from yebot.runtime.stickers import (
+    StickerImageRef,
+    explicit_reply_collect_recent_shortcut,
+    resolve_replied_sticker_image,
+)
 
 
 class ReplyComponent:
@@ -66,6 +70,7 @@ def test_replied_sticker_image_keeps_reply_source_and_component() -> None:
     assert result.source_message_id == "12"
     assert result.source_user_id == "42"
     assert result.component == {"data_url": "data:image/jpeg;base64,aW1hZ2UtZGF0YQ=="}
+    assert result.provider_url == "data:image/jpeg;base64,aW1hZ2UtZGF0YQ=="
 
 
 def test_replied_sticker_image_returns_none_for_replied_text() -> None:
@@ -83,3 +88,31 @@ def test_replied_sticker_image_returns_none_for_replied_text() -> None:
     )
 
     assert result is None
+
+
+def test_explicit_reply_shortcut_redirects_without_reporting_failure() -> None:
+    result = explicit_reply_collect_recent_shortcut(
+        StickerImageRef(object(), source_message_id="12")
+    )
+
+    assert result is not None
+    assert result["status"] == "success"
+    payload = result["result"]
+    assert isinstance(payload, dict)
+    assert payload["reason"] == "explicit_reply_already_attached"
+    assert payload["next_tool"] == "yebot_sticker_consider"
+    assert payload["image_index"] == 0
+
+
+def test_unreadable_explicit_reply_shortcut_never_falls_back_to_history() -> None:
+    result = explicit_reply_collect_recent_shortcut("unreadable")
+
+    assert result is not None
+    assert result["status"] == "success"
+    payload = result["result"]
+    assert isinstance(payload, dict)
+    assert payload == {
+        "candidate_images": 0,
+        "collected": False,
+        "reason": "quoted_image_unreadable",
+    }

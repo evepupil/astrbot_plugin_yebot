@@ -1,5 +1,6 @@
 from yebot.runtime.stickers import (
     build_sticker_consider_arguments,
+    is_explicit_replied_sticker_save_request,
     is_registered_automatic_sticker_event,
     release_automatic_sticker_run,
     reserve_automatic_sticker_event,
@@ -167,3 +168,18 @@ def test_sticker_consider_arguments_normalize_integer_image_index() -> None:
         "confidence": 0.95,
         "tags": ["开心"],
     }
+
+
+def test_explicit_replied_sticker_save_intent_is_conservative() -> None:
+    for text in ("保存这个表情包", "收藏一下", "存一下这张图", "加进表情包"):
+        assert is_explicit_replied_sticker_save_request(text)
+    for text in (
+        "不要保存",
+        "取消收藏这个",
+        "删除这个表情包",
+        "这个表情挺好",
+        "怎么保存这个表情包",
+        "请问如何收藏表情包",
+        "保存表情包是什么意思",
+    ):
+        assert not is_explicit_replied_sticker_save_request(text)

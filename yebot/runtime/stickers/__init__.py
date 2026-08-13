@@ -23,9 +23,13 @@ from .history import (
     enrich_history_image_source,
     extract_history_image_sources,
 )
+from .intent import is_explicit_replied_sticker_save_request
 from .models import StickerRecord
 from .native import NativeSticker, NativeStickerClient, parse_native_sticker
-from .reply import resolve_replied_sticker_image
+from .reply import (
+    explicit_reply_collect_recent_shortcut,
+    resolve_replied_sticker_image,
+)
 from .service import (
     STICKER_IMAGE_REFS_EXTRA,
     StickerImageRef,
@@ -45,6 +49,7 @@ __all__ = [
     "NativeStickerClient",
     "extract_image_components",
     "extract_image_refs",
+    "explicit_reply_collect_recent_shortcut",
     "resolve_replied_sticker_image",
     "HistoryImageSource",
     "extract_history_image_sources",
@@ -54,6 +59,7 @@ __all__ = [
     "StickerCaptionCache",
     "image_reference_fingerprint",
     "build_sticker_consider_arguments",
+    "is_explicit_replied_sticker_save_request",
     "reserve_automatic_sticker_search",
     "automatic_sticker_key",
     "is_registered_automatic_sticker_event",

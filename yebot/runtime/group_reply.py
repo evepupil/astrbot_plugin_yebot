@@ -14,6 +14,7 @@ class GroupReplyReason(StrEnum):
 
     DIRECT_ADDRESS = "direct_address"
     REPLY_TO_BOT = "reply_to_bot"
+    EXPLICIT_ACTION = "explicit_action"
     EMPTY_CONTENT = "empty_content"
     NEEDS_JUDGEMENT = "needs_judgement"
     AI_ALLOW = "ai_allow"
@@ -196,6 +197,7 @@ def initial_group_reply_decision(
     reply_to_bot: bool,
     current_text: str,
     has_non_text_content: bool = False,
+    explicit_action: bool = False,
 ) -> GroupReplyDecision:
     """Resolve cheap, high-confidence signals before asking the model."""
 
@@ -203,6 +205,8 @@ def initial_group_reply_decision(
         return GroupReplyDecision(True, GroupReplyReason.DIRECT_ADDRESS)
     if reply_to_bot:
         return GroupReplyDecision(True, GroupReplyReason.REPLY_TO_BOT)
+    if explicit_action:
+        return GroupReplyDecision(True, GroupReplyReason.EXPLICIT_ACTION)
     if not has_meaningful_group_content(
         current_text,
         has_non_text_content=has_non_text_content,

@@ -124,8 +124,10 @@ try:
         automatic_sticker_key,
         build_sticker_consider_arguments,
         enrich_history_image_source,
+        explicit_reply_collect_recent_shortcut,
         extract_history_image_sources,
         extract_image_components,
+        is_explicit_replied_sticker_save_request,
         is_registered_automatic_sticker_event,
         release_automatic_sticker_run,
         reserve_automatic_sticker_event,
@@ -262,8 +264,10 @@ except ImportError:
         automatic_sticker_key,
         build_sticker_consider_arguments,
         enrich_history_image_source,
+        explicit_reply_collect_recent_shortcut,
         extract_history_image_sources,
         extract_image_components,
+        is_explicit_replied_sticker_save_request,
         is_registered_automatic_sticker_event,
         release_automatic_sticker_run,
         reserve_automatic_sticker_event,
@@ -492,6 +496,7 @@ _AUTO_STICKER_SOURCE_EXTRA = "yebot.auto_sticker_source"
 _AUTO_STICKER_SOURCE_TOKEN_EXTRA = "yebot.auto_sticker_source_token"
 _BLACKLISTED_GROUP_EXTRA = "yebot.blacklisted_group"
 _TOOL_SENT_TEXTS_EXTRA = "yebot.tool_sent_texts"
+_EXPLICIT_STICKER_SAVE_EXTRA = "yebot.explicit_sticker_save"
 _GROUP_REPLY_GUIDANCE = """\
 For group messages, answer only when the available message and context contain
 enough concrete information for a useful response. The context does not need to
@@ -617,9 +622,10 @@ YeBot 工具选择规则：
   提交 should_collect、asset_kind、reaction_ready、confidence、图片含义和简短标签；
   即使决定不收藏也要明确提交分类决定。不要向用户要求说出工具名。表情库由所有群共享，
   重复图片不会重复保存。
-- 用户回复一张图片或表情包并说“保存”“收藏”“存一下”“收下这个”等时，直接调用
-  yebot_sticker_collect_recent，默认 limit=1。工具会优先读取被回复的消息，不要要求用户
-  把图片重新发送；当前消息没有明确回复图片时，才读取群里最近图片作为兜底。
+- 用户回复一张图片或表情包并说“保存”“收藏”“存一下”“收下这个”等时，代码侧会把
+  被回复的图片精确挂到当前请求；识图后直接调用一次 yebot_sticker_consider，
+  image_index=0。
+  不要调用 yebot_sticker_collect_recent，不要要求用户重新发图，也不要改为收藏其他图片。
 - 用户明确说收藏“上面/之前/刚才”的几张图片或表情包，而当前消息没有附图时，调用
   yebot_sticker_collect_recent 读取当前群最近图片；不要要求用户把图片重新发一遍。
 - 只有主人要求查看或清理表情库时，才调用 yebot_sticker_list 或
@@ -683,6 +689,21 @@ YeBot 记忆请求强制规则（优先于任何聊天人设）：
 _MEMORY_PREHANDLED_GUIDANCE = """\
 YeBot 已经在代码侧执行了当前明确的记忆请求。不要再次调用 yebot_memory_remember，
 只根据下面的执行结果如实回复用户；成功才可以说已经保存，失败时说明原因。
+"""
+
+_STICKER_SAVE_PREPARED_GUIDANCE = """\
+YeBot 已经在代码侧精确读取当前回复目标，并把被回复的图片作为当前请求的第 1 张图片
+提供给你。
+请直接识别这张图，并严格按表情收藏规则调用 yebot_sticker_consider 一次，image_index=0。
+不要调用 yebot_sticker_collect_recent，不要搜索或发送其他表情，也不要要求用户重新发图。
+工具返回 collected=true 时才说保存成功；duplicate=true 表示原本已在库中；
+native_sync_pending=true 只表示 QQ 原生收藏同步待补，本地表情库已经保存成功。
+"""
+
+_STICKER_SAVE_UNREADABLE_GUIDANCE = """\
+YeBot 已经尝试读取当前回复目标，但其中没有可用图片或原生表情图片暂时无法读取。
+不要调用任何表情收藏、搜索或发送工具，也不要改为收藏群里其他图片。简短告诉用户这张引用
+图片当前无法读取，请稍后重试；不要说工具超时、系统抽风或已经保存。
 """
 
 
@@ -804,6 +825,13 @@ class YeBot(Star):
         self._sticker_auto_send = _as_bool(values.get("sticker_auto_send"), True)
         self._sticker_agent_max_steps = _as_int(
             values.get("sticker_agent_max_steps"), 3
+        )
+        self._sticker_explicit_save_timeout_seconds = min(
+            110.0,
+            max(
+                5.0,
+                _as_float(values.get("sticker_explicit_save_timeout_seconds"), 60.0),
+            ),
         )
         self._sticker_agent_semaphore = asyncio.Semaphore(
             max(1, _as_int(values.get("sticker_agent_max_concurrency"), 1))
@@ -1137,11 +1165,15 @@ class YeBot(Star):
             raw_event,
             event.get_self_id() or self._bot_id,
         )
+        explicit_sticker_save = bool(extract_reply_references(event)) and (
+            is_explicit_replied_sticker_save_request(_current_message_text(event))
+        )
         initial = initial_group_reply_decision(
             directly_addressed=directly_addressed,
             reply_to_bot=reply_to_bot,
             current_text=_current_message_text(event),
             has_non_text_content=bool(extract_image_components(event)),
+            explicit_action=explicit_sticker_save,
         )
         decision = initial
         if initial.needs_ai_judgement:
@@ -1718,6 +1750,84 @@ class YeBot(Star):
         )
         return tuple(refs)
 
+    async def _prepare_explicit_replied_sticker_save(
+        self,
+        event: AstrMessageEvent,
+        request: ProviderRequest,
+        message_text: str,
+    ) -> str | None:
+        """Attach exactly one replied image to an explicit save request."""
+
+        if not (
+            is_explicit_replied_sticker_save_request(message_text)
+            and extract_reply_references(event)
+        ):
+            return None
+        get_extra = getattr(event, "get_extra", None)
+        set_extra = getattr(event, "set_extra", None)
+        cached = (
+            get_extra(_EXPLICIT_STICKER_SAVE_EXTRA, None)
+            if callable(get_extra)
+            else None
+        )
+        ref = cached if isinstance(cached, StickerImageRef) else None
+        if cached == "unreadable":
+            request.image_urls = []
+            return _STICKER_SAVE_UNREADABLE_GUIDANCE
+        if ref is None:
+            client = resolve_event_action_client(
+                event,
+                read_cache=self._onebot_read_cache,
+            )
+            try:
+                ref = await asyncio.wait_for(
+                    resolve_replied_sticker_image(
+                        event,
+                        client,
+                        max_bytes=self._image_reference_max_bytes,
+                        component_factory=self._reply_image_component,
+                    ),
+                    timeout=self._sticker_explicit_save_timeout_seconds,
+                )
+            except (ImageGenerationError, TimeoutError) as error:
+                logger.warning(
+                    "YeBot explicit replied sticker preparation failed "
+                    "message=%s error=%s",
+                    _request_id(event),
+                    type(error).__name__,
+                )
+                if callable(set_extra):
+                    set_extra(_EXPLICIT_STICKER_SAVE_EXTRA, "unreadable")
+                request.image_urls = []
+                return _STICKER_SAVE_UNREADABLE_GUIDANCE
+            if ref is None:
+                logger.info(
+                    "YeBot explicit replied sticker has no readable image message=%s",
+                    _request_id(event),
+                )
+                if callable(set_extra):
+                    set_extra(_EXPLICIT_STICKER_SAVE_EXTRA, "unreadable")
+                request.image_urls = []
+                return _STICKER_SAVE_UNREADABLE_GUIDANCE
+            if callable(set_extra):
+                set_extra(_EXPLICIT_STICKER_SAVE_EXTRA, ref)
+
+        if callable(set_extra):
+            set_extra(STICKER_IMAGE_REFS_EXTRA, (ref,))
+        image_urls = await self._sticker_service.image_urls(event)
+        if not image_urls:
+            if callable(set_extra):
+                set_extra(_EXPLICIT_STICKER_SAVE_EXTRA, "unreadable")
+            request.image_urls = []
+            return _STICKER_SAVE_UNREADABLE_GUIDANCE
+        request.image_urls = [image_urls[0]]
+        logger.info(
+            "YeBot explicit replied sticker prepared message=%s source_message=%s",
+            _request_id(event),
+            ref.source_message_id,
+        )
+        return _STICKER_SAVE_PREPARED_GUIDANCE
+
     @staticmethod
     def _reply_image_component(data_url: str) -> object | None:
         header, separator, encoded = data_url.partition(",")
@@ -1728,7 +1838,7 @@ class YeBot(Star):
             or ";base64" not in header.lower()
         ):
             return None
-        return Image.fromBase64(f"base64://{encoded}")
+        return Image.fromBase64(encoded)
 
     @staticmethod
     def _history_image_component(source: HistoryImageSource) -> object | None:
@@ -1736,9 +1846,7 @@ class YeBot(Star):
             encoded = source.base64_data
             if encoded.startswith("data:") and "," in encoded:
                 encoded = encoded.split(",", 1)[1]
-            if not encoded.startswith("base64://"):
-                encoded = f"base64://{encoded}"
-            return Image.fromBase64(encoded)
+            return Image.fromBase64(encoded.removeprefix("base64://"))
         if source.url.startswith(("http://", "https://")):
             return Image.fromURL(source.url)
         if source.path:
@@ -1857,6 +1965,15 @@ class YeBot(Star):
     ) -> str:
         """Collect explicitly requested images from recent group history."""
 
+        get_extra = getattr(event, "get_extra", None)
+        explicit_reply = (
+            get_extra(_EXPLICIT_STICKER_SAVE_EXTRA, None)
+            if callable(get_extra)
+            else None
+        )
+        shortcut = explicit_reply_collect_recent_shortcut(explicit_reply)
+        if shortcut is not None:
+            return json.dumps(shortcut, ensure_ascii=False)
         bounded_limit = max(1, min(int(limit), 12))
         refs = await self._load_recent_sticker_image_refs(event, bounded_limit)
         if not refs:
@@ -2100,6 +2217,13 @@ class YeBot(Star):
         message_text = _message_text(event)
         system_prompt = request.system_prompt.rstrip()
         additions: list[str] = []
+        sticker_save_guidance = await self._prepare_explicit_replied_sticker_save(
+            event,
+            request,
+            current_message_text,
+        )
+        if sticker_save_guidance:
+            additions.append(sticker_save_guidance)
         if group_reply_decision is not None:
             additions.append(_GROUP_REPLY_GUIDANCE)
         response_media_guidance = build_response_media_guidance(response_mode)

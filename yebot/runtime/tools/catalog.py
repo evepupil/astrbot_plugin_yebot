@@ -330,6 +330,7 @@ STICKER_CONSIDER = ToolDefinition(
         ),
     ),
     risk=ToolRisk.LOW,
+    timeout_seconds=20.0,
 )
 
 STICKER_SEARCH = ToolDefinition(

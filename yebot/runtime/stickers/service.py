@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import inspect
 import logging
@@ -34,6 +35,7 @@ class StickerImageRef:
     component: object
     source_message_id: str = ""
     source_user_id: str = ""
+    provider_url: str = ""
 
 
 def extract_image_components(event: object) -> tuple[object, ...]:
@@ -45,6 +47,14 @@ def extract_image_components(event: object) -> tuple[object, ...]:
 def extract_image_refs(event: object) -> tuple[StickerImageRef, ...]:
     """Return current-event images or explicitly attached historical images."""
 
+    get_extra = getattr(event, "get_extra", None)
+    historical = get_extra(STICKER_IMAGE_REFS_EXTRA, ()) if callable(get_extra) else ()
+    if isinstance(historical, (list, tuple)):
+        attached = tuple(
+            item for item in historical if isinstance(item, StickerImageRef)
+        )
+        if attached:
+            return attached
     get_messages = getattr(event, "get_messages", None)
     messages = get_messages() if callable(get_messages) else ()
     if isinstance(messages, (list, tuple)):
@@ -55,11 +65,7 @@ def extract_image_refs(event: object) -> tuple[StickerImageRef, ...]:
         ]
         if result:
             return tuple(result)
-    get_extra = getattr(event, "get_extra", None)
-    historical = get_extra(STICKER_IMAGE_REFS_EXTRA, ()) if callable(get_extra) else ()
-    if not isinstance(historical, (list, tuple)):
-        return ()
-    return tuple(item for item in historical if isinstance(item, StickerImageRef))
+    return ()
 
 
 class StickerService:
@@ -71,21 +77,31 @@ class StickerService:
         native_client: NativeStickerClient | None = None,
         *,
         min_auto_collect_confidence: float = 0.9,
+        native_sync_timeout_seconds: float = 3.0,
     ) -> None:
         if (
             not isfinite(min_auto_collect_confidence)
             or not 0 <= min_auto_collect_confidence <= 1
         ):
             raise ValueError("minimum sticker confidence must be between 0 and 1")
+        if (
+            not isfinite(native_sync_timeout_seconds)
+            or native_sync_timeout_seconds <= 0
+        ):
+            raise ValueError("native sticker sync timeout must be positive")
         self.store = store
         self.native_client = native_client
         self.min_auto_collect_confidence = min_auto_collect_confidence
+        self.native_sync_timeout_seconds = native_sync_timeout_seconds
 
     async def image_urls(self, event: object) -> tuple[str, ...]:
         """Resolve current image components into provider-readable local paths."""
 
         result: list[str] = []
         for ref in extract_image_refs(event):
+            if ref.provider_url:
+                result.append(ref.provider_url)
+                continue
             component = ref.component
             path_method = getattr(component, "convert_to_file_path", None)
             if callable(path_method):
@@ -151,7 +167,7 @@ class StickerService:
                 "image_count": len(refs),
             }
         ref = refs[index]
-        blob, suffix, media_type = await _read_image(ref.component)
+        blob, suffix, media_type = await _read_image_ref(ref)
         tags = arguments.get("tags", [])
         if not isinstance(tags, list):
             raise ValueError("tags must be an array")
@@ -167,9 +183,23 @@ class StickerService:
             confidence=confidence,
             suffix=suffix,
         )
-        record, native_synced = await self.ensure_native(result.record)
+        native_pending = False
+        try:
+            record, native_synced = await asyncio.wait_for(
+                self.ensure_native(result.record),
+                timeout=self.native_sync_timeout_seconds,
+            )
+        except TimeoutError:
+            record = result.record
+            native_synced = False
+            native_pending = self.native_client is not None
+            _LOGGER.warning(
+                "native sticker sync timed out after local save sticker=%s",
+                record.sticker_id,
+            )
         payload = _serialize_add(StickerAddResult(record, result.duplicate))
         payload["native_synced"] = native_synced
+        payload["native_sync_pending"] = native_pending
         return payload
 
     def list_for_review(self, limit: int) -> object:
@@ -333,6 +363,20 @@ async def _read_image(component: object) -> tuple[bytes, str, str]:
     if not media_type.startswith("image/"):
         raise ValueError("sticker source is not an image")
     return data, suffix, media_type
+
+
+async def _read_image_ref(ref: StickerImageRef) -> tuple[bytes, str, str]:
+    """Read a resolved reply data URL without another media download."""
+
+    provider_url = ref.provider_url.strip()
+    if provider_url.lower().startswith("data:image/"):
+        header, separator, encoded = provider_url.partition(",")
+        media_type = header[5:].split(";", 1)[0].strip().lower()
+        if separator and ";base64" in header.lower():
+            data = base64.b64decode(encoded, validate=True)
+            suffix = mimetypes.guess_extension(media_type) or ".jpg"
+            return data, suffix, media_type
+    return await _read_image(ref.component)
 
 
 def _event_message_id(event: object) -> str:

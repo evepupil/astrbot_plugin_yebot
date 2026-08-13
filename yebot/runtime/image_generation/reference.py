@@ -22,6 +22,7 @@ from .client import ImageGenerationError
 DEFAULT_MAX_REFERENCE_BYTES = 10_000_000
 ImageDownloader = Callable[[str, int], tuple[bytes, str]]
 _CQ_IMAGE_PATTERN = re.compile(r"\[CQ:image,([^\]]+)]", re.IGNORECASE)
+_MFACE_EMOJI_ID_PATTERN = re.compile(r"[a-zA-Z0-9_-]{6,256}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -188,11 +189,14 @@ def _extract_image_sources(response: object) -> tuple[str, ...]:
 def _segment_image_sources(segment: object) -> tuple[str, ...]:
     if not isinstance(segment, Mapping):
         return ()
-    if str(segment.get("type", "")).lower() != "image":
-        return ()
+    segment_type = str(segment.get("type", "")).strip().lower()
     data = segment.get("data")
     payload = data if isinstance(data, Mapping) else segment
-    return _image_sources(payload)
+    if segment_type == "image":
+        return _image_sources(payload)
+    if segment_type == "mface":
+        return _mface_sources(payload)
+    return ()
 
 
 def _image_sources(mapping: Mapping[str, Any]) -> tuple[str, ...]:
@@ -204,11 +208,26 @@ def _image_sources(mapping: Mapping[str, Any]) -> tuple[str, ...]:
     """
 
     sources: list[str] = []
+    market_face = _first_text(mapping, "emoji_id", "emojiId", "emojiID")
+    reference_keys = (
+        (
+            "url",
+            "image_url",
+            "imageUrl",
+            "file",
+            "path",
+        )
+        if market_face
+        else (
+            "file",
+            "path",
+            "url",
+            "image_url",
+            "imageUrl",
+        )
+    )
     for key in (
-        "file",
-        "path",
-        "url",
-        "image_url",
+        *reference_keys,
         "base64",
         "base64_data",
         "base64Data",
@@ -227,6 +246,38 @@ def _image_sources(mapping: Mapping[str, Any]) -> tuple[str, ...]:
         if normalized not in sources:
             sources.append(normalized)
     return tuple(sources)
+
+
+def _mface_sources(mapping: Mapping[str, Any]) -> tuple[str, ...]:
+    """Resolve a QQ market-face segment that AstrBot currently drops on input."""
+
+    sources = list(_image_sources(mapping))
+    emoji_id = _first_text(mapping, "emoji_id", "emojiId", "emojiID")
+    if _MFACE_EMOJI_ID_PATTERN.fullmatch(emoji_id):
+        prefix = emoji_id[:2]
+        market_url = (
+            "https://gxh.vip.qq.com/club/item/parcel/item/"
+            f"{prefix}/{emoji_id}/raw300.gif"
+        )
+        if market_url not in sources:
+            insertion = 0
+            while insertion < len(sources) and urlparse(sources[insertion]).scheme in {
+                "http",
+                "https",
+            }:
+                insertion += 1
+            sources.insert(insertion, market_url)
+    return tuple(sources)
+
+
+def _first_text(mapping: Mapping[str, Any], *keys: str) -> str:
+    for key in keys:
+        value = mapping.get(key)
+        if isinstance(value, (str, int, float)) and not isinstance(value, bool):
+            normalized = str(value).strip()
+            if normalized:
+                return normalized
+    return ""
 
 
 def _cq_image_sources(message: str) -> tuple[str, ...]:

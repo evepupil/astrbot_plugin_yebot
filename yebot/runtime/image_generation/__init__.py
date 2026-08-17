@@ -4,6 +4,7 @@ from .client import GeneratedImage, ImageGenerationClient, ImageGenerationError
 from .intent import (
     extract_image_edit_prompt,
     extract_image_prompt,
+    extract_image_request_text,
     is_group_image_request_addressed,
 )
 from .quota import DailyImageQuota, QuotaDecision
@@ -18,6 +19,7 @@ __all__ = [
     "ReplyImage",
     "extract_image_edit_prompt",
     "extract_image_prompt",
+    "extract_image_request_text",
     "is_group_image_request_addressed",
     "resolve_reply_image",
 ]

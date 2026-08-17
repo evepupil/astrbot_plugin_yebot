@@ -72,6 +72,7 @@ try:
         ReplyImage,
         extract_image_edit_prompt,
         extract_image_prompt,
+        extract_image_request_text,
         is_group_image_request_addressed,
         resolve_reply_image,
     )
@@ -212,6 +213,7 @@ except ImportError:
         ReplyImage,
         extract_image_edit_prompt,
         extract_image_prompt,
+        extract_image_request_text,
         is_group_image_request_addressed,
         resolve_reply_image,
     )
@@ -390,6 +392,14 @@ def _current_message_text(event: AstrMessageEvent) -> str:
         event, "message_str", ""
     )
     return str(message_str).strip()[:4000]
+
+
+def _image_request_text(event: AstrMessageEvent) -> str:
+    """Read only plain text so @ and reply components cannot break intent parsing."""
+
+    get_messages = getattr(event, "get_messages", None)
+    messages = get_messages() if callable(get_messages) else ()
+    return extract_image_request_text(messages, _current_message_text(event))
 
 
 def _plain_result_text(result: object) -> str:
@@ -3639,7 +3649,7 @@ class YeBot(Star):
 
         if not self._image_generation_enabled:
             return False
-        message_text = _current_message_text(event)
+        message_text = _image_request_text(event)
         prompt = extract_image_prompt(message_text)
         edit_prompt = extract_image_edit_prompt(message_text)
         if prompt is None and edit_prompt is None:

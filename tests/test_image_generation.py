@@ -9,12 +9,14 @@ from yebot.runtime.image_generation import (
     ImageGenerationError,
     extract_image_edit_prompt,
     extract_image_prompt,
+    extract_image_request_text,
     is_group_image_request_addressed,
 )
 
 
 def test_extract_image_prompt_from_chinese_requests() -> None:
     assert extract_image_prompt("画一只戴墨镜的猫") == "一只戴墨镜的猫"
+    assert extract_image_prompt("画成电影海报风格") == "电影海报风格"
     assert extract_image_prompt("请帮我生成一张赛博朋克城市") == "赛博朋克城市"
     assert extract_image_prompt("[CQ:at,qq=123] 画海边的日落") == "海边的日落"
     assert extract_image_prompt("叶桐 画一只戴墨镜的猫") == "一只戴墨镜的猫"
@@ -29,10 +31,33 @@ def test_extract_image_prompt_supports_english_and_rejects_questions() -> None:
 
 def test_extract_image_edit_prompt_supports_reference_transform_requests() -> None:
     assert extract_image_edit_prompt("把这张图改成电影海报风格") == "电影海报风格"
+    assert extract_image_edit_prompt("把这个黑色小马改成白色小马") == "白色小马"
+    assert extract_image_edit_prompt("把这个图里的角色变成3个不太聪明的样子") == (
+        "3个不太聪明的样子"
+    )
+    assert extract_image_edit_prompt("编辑这张图片为黑白漫画") == "黑白漫画"
     assert extract_image_edit_prompt("edit this image into watercolor art") == (
         "watercolor art"
     )
     assert extract_image_edit_prompt("改一下") is None
+
+
+def test_extract_image_request_text_ignores_non_text_components() -> None:
+    class Plain:
+        def __init__(self, text: str) -> None:
+            self.text = text
+
+    class At:
+        def __init__(self, text: str) -> None:
+            self.text = text
+
+    assert (
+        extract_image_request_text(
+            [At("@机器人"), Plain("把这个图改成水彩风格")],
+            "fallback",
+        )
+        == "把这个图改成水彩风格"
+    )
 
 
 def test_group_image_request_accepts_a_mention_or_wake_command() -> None:

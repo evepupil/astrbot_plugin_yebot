@@ -13,7 +13,7 @@ _WAKE_PREFIX_PATTERN = re.compile(r"^叶桐\s*[,，:：]?\s*", re.IGNORECASE)
 _IMAGE_INTENT_PATTERNS = (
     re.compile(
         r"^(?:请帮我|帮我|麻烦你|麻烦|请你|请|给我|替我|我想(?:要)?(?:让你)?|想要|来|整)?"
-        r"\s*(?:画|绘制|描绘|生图|生成(?:一张|一幅|一副)?|做图|做一张图|来一张|整一张)"
+        r"\s*(?:画成|画为|画|绘制|描绘|生图|生成(?:一张|一幅|一副)?|做图|做一张图|来一张|整一张)"
         r"\s*(?P<prompt>.+)$",
         re.IGNORECASE,
     ),
@@ -25,10 +25,23 @@ _IMAGE_INTENT_PATTERNS = (
 )
 _IMAGE_EDIT_PATTERNS = (
     re.compile(
+        r"^(?:把|將|将)\s*.+?\s*"
+        r"(?:改成|改为|改為|变成|變成|重绘成|重繪成|重绘为|重繪為|换成|換成|"
+        r"修改成|修改为|修改為)\s*(?P<prompt>.+)$",
+        re.IGNORECASE,
+    ),
+    re.compile(
         r"^(?:把|將|将)?\s*(?:这张|這張|这幅|這幅|该|該|它|原|参考|參考)?"
         r"(?:图|圖|图片|圖片)?\s*"
         r"(?:改成|改为|改為|变成|變成|重绘成|重繪成|重绘为|重繪為|换成|換成|"
         r"修改成|修改为|修改為)\s*(?P<prompt>.+)$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^(?:编辑|編輯|修图|修圖|处理|處理)\s*"
+        r"(?:(?:这张|這張|这幅|這幅|该|該|它|原|参考|參考)?"
+        r"(?:图片|圖片|图|圖)?\s*)?"
+        r"(?:改成|改为|改為|变成|變成|为|為|成)?\s*(?P<prompt>.+)$",
         re.IGNORECASE,
     ),
     re.compile(
@@ -49,6 +62,22 @@ def _normalize_image_request(message: str) -> str:
     normalized = _CQ_CODE_PATTERN.sub(" ", message)
     normalized = " ".join(normalized.replace("\r", " ").splitlines()).strip()
     return _WAKE_PREFIX_PATTERN.sub("", normalized, count=1).strip()
+
+
+def extract_image_request_text(messages: object, fallback: str = "") -> str:
+    """Return only current plain text from an AstrBot message chain."""
+
+    if isinstance(messages, (list, tuple)):
+        plain_parts = [
+            component.text.strip()
+            for component in messages
+            if type(component).__name__ == "Plain"
+            and isinstance(getattr(component, "text", None), str)
+            and component.text.strip()
+        ]
+        if plain_parts:
+            return " ".join(plain_parts)[:4_000]
+    return fallback.strip()[:4_000]
 
 
 def extract_image_prompt(message: str) -> str | None:
